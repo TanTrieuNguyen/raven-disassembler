@@ -1,0 +1,12 @@
+/target/
+/.tools/
+/artifacts/
+*.sqlite*
+.DS_Store
+/fixtures/sample
+/fixtures/sample.dSYM/
+/docs/*.log
+/docs/rea-fixture-evidence.json
+/docs/gui-launch.json
+/docs/gui-preview.png
+/docs/release-smoke.json

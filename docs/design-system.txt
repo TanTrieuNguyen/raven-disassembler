@@ -1,0 +1,11 @@
+RAVEN Disassembler — native desktop workbench
+
+Layout: resizable function navigation on the left; main listing and analysis tabs in the center; path/open/report controls above; persistent status below. Minimum window 960x600, default 1440x900.
+
+Typography: egui native proportional UI text at 14px; monospaced listing at 13px; addresses and bytes align in rows. Headings identify the active function; badges never substitute for explicit status text.
+
+Theme: egui built-in light and dark themes, selectable in the header. The listing uses a muted cyan address color (140,175,195 on dark; 45,75,95 on light), bold mnemonics and ordinary operand text. Function provenance is available on hover; incomplete analysis is also explained in Coverage.
+
+Interaction: ordinary native egui buttons and text inputs; explicit loading indicator; worker-based binary load; disabled Open while loading; retained error/status text; revision conflicts preserve the unsaved editor contents. Metadata/triage have explicit refresh controls. Lists of functions, strings and instructions use row virtualization.
+
+Verification boundary: compiled with AccessKit enabled; actual screen-reader, keyboard-only, resized-window, light-mode and full interaction audits remain unverified. A screenshot alone would not validate those behaviors.

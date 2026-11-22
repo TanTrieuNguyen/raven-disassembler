@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "raven": {
+      "command": "/absolute/path/to/raven-disassembler/target/release/raven-mcp"
+    }
+  }
+}
