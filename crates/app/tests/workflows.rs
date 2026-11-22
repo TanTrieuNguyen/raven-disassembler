@@ -414,3 +414,39 @@ fn mcp_stdio_roundtrip_has_only_jsonrpc_on_stdout() -> Result<()> {
     assert_eq!(bytes["hex"], "b82a000000c3");
     Ok(())
 }
+
+#[test]
+fn raw_thumb_uses_explicit_mapping_and_separates_annotations() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("thumb.bin");
+    std::fs::write(&path, [0x70, 0x47]).unwrap(); // bx lr
+    let mut workspace = Workspace::new(dir.path().join("workspace.sqlite").as_path()).unwrap();
+    let open = |workspace: &mut Workspace, base: &str| {
+        workspace.call("open_raw", &json!({"path":path,"mode":"thumb","base":base}))
+    };
+    let first = open(&mut workspace, "0x1000").unwrap();
+    let detail = workspace
+        .call("analyze_function", &json!({"address":"0x1000"}))
+        .unwrap();
+    assert_eq!(detail["instructions"][0]["mnemonic"], "bx");
+    assert_eq!(detail["instructions"][0]["flow"], "return");
+    assert_eq!(workspace.a().unwrap().file_offset(0x1000).unwrap(), 0);
+    workspace
+        .call(
+            "annotate",
+            &json!({"address":"0x1000","name":"first_mapping"}),
+        )
+        .unwrap();
+    assert!(open(&mut workspace, "0x2001").is_err());
+    assert_eq!(workspace.a().unwrap().entry, 0x1000);
+    let second = open(&mut workspace, "0x2000").unwrap();
+    assert_eq!(first["sha256"], second["sha256"]);
+    assert_ne!(
+        first["raw_mapping"]["workspace_id"],
+        second["raw_mapping"]["workspace_id"]
+    );
+    assert_eq!(
+        workspace.call("annotations", &json!({})).unwrap(),
+        json!([])
+    );
+}

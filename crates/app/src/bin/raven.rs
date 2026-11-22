@@ -22,6 +22,25 @@ enum Cmd {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Analyze a raw image with an explicit virtual base and CPU mode.
+    Raw {
+        file: PathBuf,
+        #[arg(long)]
+        mode: String,
+        #[arg(long)]
+        base: String,
+        #[arg(long, default_value = "little")]
+        endian: String,
+        #[arg(long)]
+        disassemble: Option<String>,
+        #[arg(long, default_value_t = 128)]
+        size: usize,
+    },
+    /// Decompile a function through the configured local Ghidra installation.
+    Decompile {
+        file: PathBuf,
+        address: String,
+    },
     /// Analyze many files independently; failed files remain in the result.
     Batch {
         files: Vec<PathBuf>,
@@ -107,6 +126,32 @@ fn main() -> Result<()> {
     };
     let (result, output) = match args.command {
         Cmd::Analyze { file, output } => (open(&mut w, &file)?, output),
+        Cmd::Raw {
+            file,
+            mode,
+            base,
+            endian,
+            disassemble,
+            size,
+        } => {
+            let analysis = w.call(
+                "open_raw",
+                &json!({"path":file,"mode":mode,"base":base,"endian":endian}),
+            )?;
+            let result = if let Some(address) = disassemble {
+                w.call("disassemble", &json!({"address":address,"size":size}))?
+            } else {
+                analysis
+            };
+            (result, None)
+        }
+        Cmd::Decompile { file, address } => {
+            open(&mut w, &file)?;
+            (
+                w.call("decompile_function", &json!({"address":address}))?,
+                None,
+            )
+        }
         Cmd::Batch { files, output } => {
             anyhow::ensure!(!files.is_empty(), "provide at least one file");
             let rows: Vec<_> = files

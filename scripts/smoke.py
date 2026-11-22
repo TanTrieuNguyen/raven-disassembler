@@ -49,5 +49,5 @@ with tempfile.TemporaryDirectory(prefix='raven-smoke-') as tmp:
               {'jsonrpc':'2.0','id':4,'method':'tools/call','params':{'name':'disassemble','arguments':{'address':address,'size':32}}}]
     proc=subprocess.run([str(bin_dir/'raven-mcp'),'--database',str(database)],input='\n'.join(map(json.dumps,requests))+'\n',capture_output=True,text=True,check=True)
     responses=list(map(json.loads,proc.stdout.splitlines()));assert len(responses)==4
-    assert len(responses[1]['result']['tools'])==23 and responses[-1]['result']['isError'] is False
-    print(json.dumps({'status':'passed','format':analysis['format'],'architecture':analysis['architecture'],'sha256':analysis['sha256'],'functions':len(analysis['functions']),'mcp_tools':23,'checks':['actual CLI analysis/disassembly/CFG','annotations reopen','exact signatures','triage IOC','batch mixed success','JSON report','process plugin','local mock Assist HTTP','MCP stdio lifecycle + real disassembly']},indent=2))
+    assert len(responses[1]['result']['tools'])==25 and responses[-1]['result']['isError'] is False
+    print(json.dumps({'status':'passed','format':analysis['format'],'architecture':analysis['architecture'],'sha256':analysis['sha256'],'functions':len(analysis['functions']),'mcp_tools':25,'checks':['actual CLI analysis/disassembly/CFG','annotations reopen','exact signatures','triage IOC','batch mixed success','JSON report','process plugin','local mock Assist HTTP','MCP stdio lifecycle + real disassembly']},indent=2))

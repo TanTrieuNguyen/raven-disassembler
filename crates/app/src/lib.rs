@@ -1,3 +1,4 @@
+pub mod decompile;
 pub mod extras;
 pub mod protocol;
 use anyhow::{bail, Context, Result};
@@ -38,6 +39,19 @@ pub fn text<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
 pub fn default_database() -> PathBuf {
     if let Some(path) = std::env::var_os("RAVEN_DB").or_else(|| std::env::var_os("RIVET_DB")) {
         return path.into();
+    }
+    if cfg!(windows) {
+        if let Some(root) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(root).join("RAVEN Disassembler/workspace.sqlite");
+        }
+    }
+    if cfg!(target_os = "linux") {
+        if let Some(root) = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+        {
+            return root.join("raven-disassembler/workspace.sqlite");
+        }
     }
     if let Some(root) = std::env::var_os("HOME") {
         let path = PathBuf::from(root);
@@ -99,6 +113,23 @@ impl Workspace {
             }
         }
         match name {
+            "open_raw" => {
+                let little_endian = match args.get("endian") {
+                    None => true,
+                    Some(value) if value == "little" => true,
+                    Some(value) if value == "big" => false,
+                    _ => bail!("endian must be little or big"),
+                };
+                let analysis = Analysis::open_raw(
+                    text(args, "path")?,
+                    text(args, "mode")?,
+                    address(args, "base")?,
+                    little_endian,
+                )?;
+                let value = serde_json::to_value(&analysis)?;
+                self.analysis = Some(analysis);
+                Ok(value)
+            }
             "open_binary" => {
                 let analysis = Analysis::open(Path::new(text(args, "path")?))?;
                 let value = serde_json::to_value(&analysis)?;
@@ -115,7 +146,7 @@ impl Workspace {
                 let q = args["query"].as_str().unwrap_or("");
                 let renamed: BTreeMap<_, _> = self
                     .store
-                    .annotations(&a.sha256)?
+                    .annotations(a.workspace_id())?
                     .into_iter()
                     .filter_map(|ann| ann.name.map(|name| (ann.address, name)))
                     .collect();
@@ -156,13 +187,14 @@ impl Workspace {
                 let mut detail = a.function(address)?;
                 if let Some(name) = self
                     .store
-                    .annotation(&a.sha256, address)?
+                    .annotation(a.workspace_id(), address)?
                     .and_then(|ann| ann.name)
                 {
                     detail.function.name = name;
                 }
                 Ok(serde_json::to_value(detail)?)
             }
+            "decompile_function" => decompile::function(self.a()?, address(args, "address")?),
             "xrefs" => Ok(serde_json::to_value(
                 self.a()?.xrefs(address(args, "address")?),
             )?),
@@ -173,7 +205,7 @@ impl Workspace {
                 Ok(json!({"hex":hex::encode(bytes)}))
             }
             "annotate" => {
-                let sha = self.a()?.sha256.clone();
+                let sha = self.a()?.workspace_id().to_owned();
                 let addr = address(args, "address")?;
                 let author = args["author"].as_str().unwrap_or("local");
                 let ann = self.store.annotate(
@@ -187,11 +219,13 @@ impl Workspace {
                 Ok(serde_json::to_value(ann)?)
             }
             "annotations" => Ok(serde_json::to_value(
-                self.store.annotations(&self.a()?.sha256)?,
+                self.store.annotations(self.a()?.workspace_id())?,
             )?),
-            "audit_log" => Ok(serde_json::to_value(self.store.events(&self.a()?.sha256)?)?),
+            "audit_log" => Ok(serde_json::to_value(
+                self.store.events(self.a()?.workspace_id())?,
+            )?),
             "export_annotations" => Ok(serde_json::from_str(
-                &self.store.export_annotations(&self.a()?.sha256)?,
+                &self.store.export_annotations(self.a()?.workspace_id())?,
             )?),
             "import_annotations" => {
                 let document = text(args, "document")?;
@@ -236,7 +270,7 @@ impl Workspace {
             "triage" => extras::triage(Path::new(&self.a()?.path)),
             "save_report" => {
                 let path = Path::new(text(args, "path")?);
-                let report = json!({"schemaVersion":1,"analysis":self.a()?,"annotations":self.store.annotations(&self.a()?.sha256)?});
+                let report = json!({"schemaVersion":1,"analysis":self.a()?,"annotations":self.store.annotations(self.a()?.workspace_id())?});
                 fs::write(path, serde_json::to_vec_pretty(&report)?)?;
                 Ok(json!({"saved":path}))
             }

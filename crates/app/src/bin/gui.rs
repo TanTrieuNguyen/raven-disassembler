@@ -12,6 +12,8 @@ struct App {
     tab: usize,
     detail: Option<FunctionDetail>,
     output: String,
+    pseudocode: String,
+    decompiling: Option<mpsc::Receiver<anyhow::Result<Value>>>,
     status: String,
     loading: Option<mpsc::Receiver<anyhow::Result<Analysis>>>,
     name: String,
@@ -32,6 +34,8 @@ impl App {
             tab: 0,
             detail: None,
             output: String::new(),
+            pseudocode: String::new(),
+            decompiling: None,
             status: "Ready. Open a thin ELF, PE or Mach-O binary.".into(),
             loading: None,
             name: String::new(),
@@ -66,7 +70,7 @@ impl App {
                 self.comment.clear();
                 self.revision = 0;
                 if let Some(a) = self.ws.analysis.as_ref() {
-                    if let Ok(Some(ann)) = self.ws.store.annotation(&a.sha256, address) {
+                    if let Ok(Some(ann)) = self.ws.store.annotation(a.workspace_id(), address) {
                         if let Some(name) = ann.name {
                             self.name = name;
                         }
@@ -80,11 +84,54 @@ impl App {
             Err(e) => self.status = format!("{e:#}"),
         }
     }
+    fn start_decompile(&mut self) {
+        if let (Some(analysis), Some(detail)) = (&self.ws.analysis, &self.detail) {
+            let address = detail.function.address;
+            let analysis = analysis.clone();
+            let (send, receive) = mpsc::channel();
+            self.decompiling = Some(receive);
+            self.pseudocode = format!("Decompiling {address:#x}…");
+            std::thread::spawn(move || {
+                let _ = send.send(raven::decompile::function(&analysis, address));
+            });
+        }
+    }
+
+    fn render_pseudocode(&mut self, ui: &mut egui::Ui) {
+        let available = self.detail.is_some() && self.decompiling.is_none();
+        if ui
+            .add_enabled(available, egui::Button::new("Decompile selected function"))
+            .clicked()
+        {
+            self.start_decompile();
+        }
+        if self.decompiling.is_some() {
+            ui.spinner();
+        }
+        if self.pseudocode.is_empty() {
+            ui.label("Configure RAVEN_GHIDRA_HOME to enable the Ghidra provider.");
+        }
+        egui::ScrollArea::both().show(ui, |ui| {
+            ui.add(egui::Label::new(RichText::new(&self.pseudocode).monospace()).selectable(true));
+        });
+    }
     fn invoke(&mut self, tool: &str, args: Value) {
         match self.ws.call(tool, &args) {
             Ok(v) => {
                 self.output = serde_json::to_string_pretty(&v).unwrap_or_default();
                 self.status = format!("{tool}: complete");
+                if matches!(tool, "open_raw" | "open_binary" | "close_binary") {
+                    self.detail = None;
+                    self.pseudocode.clear();
+                    self.decompiling = None;
+                    let first = self.ws.analysis.as_ref().and_then(|analysis| {
+                        self.path = analysis.path.clone();
+                        analysis.functions.first().map(|function| function.address)
+                    });
+                    if let Some(address) = first {
+                        self.select(address);
+                    }
+                }
             }
             Err(e) => self.status = format!("{tool}: {e:#}"),
         }
@@ -92,6 +139,27 @@ impl App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(worker) = &self.decompiling {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            match worker.try_recv() {
+                Ok(result) => {
+                    self.pseudocode = match result {
+                        Ok(value) => format!(
+                            "// Ghidra pseudocode for {}\n{}",
+                            value["address"].as_str().unwrap_or_default(),
+                            value["pseudocode"].as_str().unwrap_or_default()
+                        ),
+                        Err(error) => format!("{error:#}"),
+                    };
+                    self.decompiling = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.pseudocode = "Decompiler worker disconnected".into();
+                    self.decompiling = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if self.loading.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(80));
             let received = self.loading.as_ref().unwrap().try_recv();
@@ -105,6 +173,8 @@ impl eframe::App for App {
                         a.functions.len()
                     );
                     self.ws.analysis = Some(a);
+                    self.pseudocode.clear();
+                    self.decompiling = None;
                     self.detail = None;
                     self.loading = None;
                     if let Some(first) = first {
@@ -185,7 +255,7 @@ impl eframe::App for App {
                     .ws
                     .analysis
                     .as_ref()
-                    .and_then(|a| self.ws.store.annotations(&a.sha256).ok())
+                    .and_then(|a| self.ws.store.annotations(a.workspace_id()).ok())
                     .unwrap_or_default()
                     .into_iter()
                     .filter_map(|ann| ann.name.map(|n| (ann.address, n)))
@@ -234,7 +304,7 @@ impl eframe::App for App {
                     });
             });
         egui::CentralPanel::default().show(ctx,|ui|{
-            ui.horizontal_wrapped(|ui|{for(i,name)in ["Disassembly","Control flow","Strings","Sections","Imports / exports","Triage","Metadata","Tools","Coverage"].iter().enumerate(){if ui.selectable_label(self.tab==i,*name).clicked(){self.tab=i;if i==5{self.invoke("triage",json!({}));}
+            ui.horizontal_wrapped(|ui|{for(i,name)in ["Disassembly","Control flow","Strings","Sections","Imports / exports","Triage","Metadata","Tools","Coverage","Pseudocode"].iter().enumerate(){if ui.selectable_label(self.tab==i,*name).clicked(){self.tab=i;if i==5{self.invoke("triage",json!({}));}
 if i==6{self.invoke("annotations",json!({}));}}}});
             ui.separator();
             match self.tab{
@@ -263,12 +333,13 @@ if ui.button("Audit history").clicked(){self.invoke("audit_log",json!({}));}});
                 },
                 7=>{
                     ui.heading("Analysis tools");ui.label("The same tool API is available through MCP and the headless CLI.");
-                    egui::ComboBox::from_label("Tool").selected_text(&self.tool).show_ui(ui,|ui|{for t in raven::protocol::tools(){let n=t["name"].as_str().unwrap();if n!="assist"&&n!="run_plugin"{ui.selectable_value(&mut self.tool,n.to_owned(),n);}}});
+                    egui::ComboBox::from_label("Tool").selected_text(&self.tool).show_ui(ui,|ui|{for t in raven::protocol::tools(){let n=t["name"].as_str().unwrap();if n!="assist"&&n!="run_plugin"&&n!="decompile_function"{ui.selectable_value(&mut self.tool,n.to_owned(),n);}}});
                     ui.label("Arguments (JSON object)");ui.add(egui::TextEdit::multiline(&mut self.args).code_editor().desired_rows(3).desired_width(f32::INFINITY));
                     if ui.button("Run tool").clicked(){match serde_json::from_str(&self.args){Ok(v)=>{let t=self.tool.clone();self.invoke(&t,v);},Err(e)=>self.status=format!("Invalid JSON: {e}")}}
                     egui::ScrollArea::both().show(ui,|ui|{ui.monospace(&self.output);});
                 },
-                _=>{ui.heading("Engine coverage");ui.label("Implemented: static inventory, x86/x64/ARM/AArch64 disassembly, direct control-flow xrefs, CFG, ASCII strings, annotations, exact function signatures, MCP stdio and process plugin SDK.");ui.add_space(12.);ui.label("Not yet implemented: high-level decompiler, debugger, full type recovery, data/indirect xrefs, unpacking/emulation, remote team synchronization, IDB compatibility and Hex-Rays plugin compatibility.");if let Some(a)=&self.ws.analysis{ui.separator();ui.monospace(&a.sha256);for l in &a.limitations{ui.label(format!("• {l}"));}}},
+                9 => self.render_pseudocode(ui),
+                _=>{ui.heading("Engine coverage");ui.label("Implemented: static inventory, x86/x64/ARM/AArch64 disassembly, direct control-flow xrefs, CFG, ASCII strings, annotations, exact function signatures, MCP stdio and process plugin SDK.");ui.add_space(12.);ui.label("Optional pseudocode provider: Ghidra. Remaining: debugger, full type recovery, data/indirect xrefs, unpacking/emulation, remote team synchronization, IDB compatibility and Hex-Rays plugin compatibility.");if let Some(a)=&self.ws.analysis{ui.separator();ui.monospace(&a.sha256);for l in &a.limitations{ui.label(format!("• {l}"));}}},
             }
         });
     }

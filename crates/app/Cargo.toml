@@ -20,6 +20,7 @@ hex = "0.4"
 regex = "1"
 reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"]}
 eframe = {version = "0.31", optional = true, default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"]}
+tempfile = "3.27.0"
 
 [[bin]]
 name = "raven"

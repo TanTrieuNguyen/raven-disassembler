@@ -94,6 +94,8 @@ pub struct Analysis {
     pub format: String,
     pub architecture: String,
     pub entry: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_mapping: Option<RawMapping>,
     pub sections: Vec<Section>,
     pub functions: Vec<Function>,
     pub symbols: Vec<Symbol>,
@@ -107,6 +109,31 @@ pub struct Analysis {
     references: Vec<Xref>,
     #[serde(skip)]
     little_endian: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RawMapping {
+    pub base: u64,
+    pub mode: String,
+    pub little_endian: bool,
+    pub workspace_id: String,
+}
+
+fn read_input(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    anyhow::ensure!(std::fs::metadata(path)?.is_file(), "input must be a regular file");
+    let file = std::fs::File::open(path).context("open binary")?;
+    let metadata = file.metadata().context("reading binary metadata")?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        bail!("input must be a regular file <=512 MiB");
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "input exceeds 512 MiB"
+    );
+    Ok(bytes)
 }
 
 pub fn entropy(bytes: &[u8]) -> f64 {
@@ -130,12 +157,80 @@ pub fn entropy(bytes: &[u8]) -> f64 {
 impl Analysis {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let metadata = std::fs::metadata(path).context("reading binary metadata")?;
-        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
-            bail!("input must be a regular file <=512 MiB");
-        }
-        Self::from_bytes(path.to_string_lossy().into_owned(), std::fs::read(path)?)
+        Self::from_bytes(path.to_string_lossy().into_owned(), read_input(path)?)
     }
+
+    pub fn open_raw(
+        path: impl AsRef<Path>,
+        mode: &str,
+        base: u64,
+        little_endian: bool,
+    ) -> Result<Self> {
+        let path = path.as_ref();
+        let (architecture, alignment) = match mode {
+            "x86" | "x86_64" => {
+                anyhow::ensure!(little_endian, "x86 requires little endian");
+                (mode, 1)
+            }
+            "arm" | "aarch64" => (mode, 4),
+            "thumb" => ("arm", 2),
+            _ => bail!("raw mode must be x86, x86_64, arm, thumb or aarch64"),
+        };
+        anyhow::ensure!(
+            base.is_multiple_of(alignment),
+            "base must be aligned to {alignment} bytes"
+        );
+        let bytes = read_input(path)?;
+        let size = bytes.len() as u64;
+        anyhow::ensure!(size != 0, "empty raw image");
+        let last = base
+            .checked_add(size)
+            .and_then(|end| end.checked_sub(1))
+            .context("raw mapping overflows virtual addresses")?;
+        if matches!(architecture, "x86" | "arm") {
+            anyhow::ensure!(
+                last <= u64::from(u32::MAX),
+                "raw mapping exceeds 32-bit address space"
+            );
+        }
+        let sha256 = hex::encode(Sha256::digest(&bytes));
+        let workspace_id = hex::encode(Sha256::digest(format!(
+            "raven-raw-v1:{sha256}:{mode}:{base}:{little_endian}"
+        )));
+        let sections = vec![Section {
+            name: "raw".into(),
+            address: base,
+            size,
+            file_offset: 0,
+            file_size: size,
+            executable: true,
+            entropy: entropy(&bytes),
+        }];
+        let strings = ascii_strings(&bytes, &sections);
+        let seed = Function {
+            address: base,
+            name: "entry".into(),
+            size: 0,
+            source: "raw-base".into(),
+        };
+        let analysis = Self {
+            path: path.to_string_lossy().into_owned(), sha256, format: "Raw".into(),
+            architecture: architecture.into(), entry: base,
+            raw_mapping: Some(RawMapping { base, mode: mode.into(), little_endian, workspace_id }),
+            sections, functions: vec![], symbols: vec![], imports: vec![], exports: vec![],
+            strings, bytes, references: vec![], little_endian,
+            limitations: vec!["The entire raw image is treated as potential code. Base, architecture, and endianness are caller-selected and there are no format-derived function boundaries.".into(),
+                "Direct references and CFG are inferred from a bounded linear sweep. Indirect references and data layout are unknown.".into()],
+        };
+        Ok(analysis.finish(BTreeMap::from([(base, seed)])))
+    }
+
+    pub fn workspace_id(&self) -> &str {
+        self.raw_mapping
+            .as_ref()
+            .map_or(&self.sha256, |mapping| &mapping.workspace_id)
+    }
+
     pub fn from_bytes(path: String, bytes: Vec<u8>) -> Result<Self> {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             bail!("input exceeds 512 MiB");
@@ -254,33 +349,11 @@ impl Analysis {
                 name: String::from_utf8_lossy(e.name()).into_owned(),
             })
             .collect();
-        let mut strings = Vec::new();
-        let mut start = 0;
-        for end in 0..=bytes.len() {
-            if end < bytes.len() && (bytes[end].is_ascii_graphic() || bytes[end] == b' ') {
-                continue;
-            }
-            if end - start >= 4 {
-                let offset = start as u64;
-                let address = sections
-                    .iter()
-                    .find(|s| contains(s.file_offset, s.file_size, offset))
-                    .and_then(|s| s.address.checked_add(offset - s.file_offset));
-                strings.push(BinaryString {
-                    file_offset: offset,
-                    address,
-                    value: String::from_utf8_lossy(&bytes[start..end]).into_owned(),
-                });
-                if strings.len() >= 200_000 {
-                    break;
-                }
-            }
-            start = end + 1;
-        }
+        let strings = ascii_strings(&bytes, &sections);
         let little_endian = file.is_little_endian();
         let format = format!("{:?}", file.format());
         drop(file);
-        let mut result = Self { path, sha256: hex::encode(Sha256::digest(&bytes)), format, architecture, entry,
+        let mut result = Self { path, sha256: hex::encode(Sha256::digest(&bytes)), format, architecture, entry, raw_mapping: None,
             sections, functions: vec![], symbols, strings, imports, exports,
             limitations: vec!["Function seeds use symbols, entry point and direct calls; stripped/indirect functions may be missing.".into(),
                 "References cover direct code branches/calls only; data and indirect references are unknown.".into(),
@@ -303,6 +376,11 @@ impl Analysis {
         if raw_entry != 0 && entry == 0 {
             result.limitations.push(format!("Mach-O entry file offset 0x{raw_entry:x} could not be mapped; entry virtual address is unknown (reported as zero)."));
         }
+        Ok(result.finish(seeds))
+    }
+
+    fn finish(mut self, mut seeds: BTreeMap<u64, Function>) -> Self {
+        let result = &mut self;
         let mut scan_left = MAX_SCAN_BYTES;
         for s in result.sections.clone().into_iter().filter(|s| s.executable) {
             let count = (s.file_size as usize).min(scan_left);
@@ -419,7 +497,7 @@ impl Analysis {
                 result.functions[index].source.push_str("+inferred-extent");
             }
         }
-        Ok(result)
+        self
     }
     fn engine(&self, thumb: bool) -> Result<Capstone> {
         let endian = if self.little_endian {
@@ -458,6 +536,26 @@ impl Analysis {
     pub fn summary(&self) -> serde_json::Value {
         serde_json::json!({"path":self.path,"sha256":self.sha256,"format":self.format,"architecture":self.architecture,"entry":self.entry,"sections":self.sections.len(),"functions":self.functions.len(),"strings":self.strings.len(),"imports":self.imports.len(),"exports":self.exports.len(),"limitations":self.limitations})
     }
+    pub fn snapshot(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn file_offset(&self, address: u64) -> Result<u64> {
+        let base = if self.architecture == "arm" {
+            address & !1
+        } else {
+            address
+        };
+        self.sections
+            .iter()
+            .find(|section| {
+                section.executable && contains(section.address, section.file_size, base)
+            })
+            .and_then(|section| section.file_offset.checked_add(base - section.address))
+            .filter(|&offset| offset < self.bytes.len() as u64)
+            .with_context(|| format!("no file-backed executable byte at {address:#x}"))
+    }
+
     pub fn bytes_at(&self, address: u64, size: usize) -> Result<Vec<u8>> {
         self.read_bytes(address, size)
     }
@@ -497,7 +595,12 @@ impl Analysis {
         if bounded && size > MAX_DISASSEMBLY_BYTES {
             bail!("disassembly limit is 65536 bytes");
         }
-        let thumb = self.architecture == "arm" && address & 1 == 1;
+        let thumb = self.architecture == "arm"
+            && (address & 1 == 1
+                || self
+                    .raw_mapping
+                    .as_ref()
+                    .is_some_and(|mapping| mapping.mode == "thumb"));
         let base = if thumb { address & !1 } else { address };
         let cs = self.engine(thumb)?;
         let bytes = self.mapped_bytes(base, size)?;
@@ -589,6 +692,33 @@ impl Analysis {
         })
     }
 }
+fn ascii_strings(bytes: &[u8], sections: &[Section]) -> Vec<BinaryString> {
+    let mut strings = Vec::new();
+    let mut start = 0;
+    for end in 0..=bytes.len() {
+        if end < bytes.len() && (bytes[end].is_ascii_graphic() || bytes[end] == b' ') {
+            continue;
+        }
+        if end - start >= 4 {
+            let offset = start as u64;
+            let address = sections
+                .iter()
+                .find(|s| contains(s.file_offset, s.file_size, offset))
+                .and_then(|s| s.address.checked_add(offset - s.file_offset));
+            strings.push(BinaryString {
+                file_offset: offset,
+                address,
+                value: String::from_utf8_lossy(&bytes[start..end]).into_owned(),
+            });
+            if strings.len() >= 200_000 {
+                break;
+            }
+        }
+        start = end + 1;
+    }
+    strings
+}
+
 fn contains(base: u64, size: u64, value: u64) -> bool {
     value >= base && value - base < size
 }

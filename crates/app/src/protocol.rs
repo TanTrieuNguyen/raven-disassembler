@@ -13,6 +13,7 @@ pub fn tools() -> Vec<Value> {
     let paging = json!({"query":str_,"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":1000}});
     let mut result=vec![
         tool("open_binary","Load a thin ELF, PE or Mach-O file for static analysis. Does not execute it.",json!({"path":str_}),&["path"]),
+        tool("open_raw","Map raw bytes at a caller-selected base. Modes: x86, x86_64, arm, thumb, aarch64.",json!({"path":str_,"mode":{"enum":["x86","x86_64","arm","thumb","aarch64"]},"base":addr,"endian":{"enum":["little","big"]}}),&["path","mode","base"]),
         tool("close_binary","Release the active binary; SQLite metadata remains.",json!({}),&[]),
         tool("binary_info","Return metadata, analysis inventory and explicit coverage limitations.",json!({}),&[]),
         tool("list_functions","Search symbol/entry/call-target candidate functions, with paging.",paging.clone(),&[]),
@@ -22,6 +23,7 @@ pub fn tools() -> Vec<Value> {
         tool("list_exports","List parsed exports.",json!({}),&[]),
         tool("disassemble","Decode real instructions at a virtual address using Capstone.",json!({"address":addr,"size":size}),&["address"]),
         tool("analyze_function","Return inferred function bounds, instructions, basic blocks and direct xrefs. Not decompilation.",json!({"address":addr}),&["address"]),
+        tool("decompile_function","Generate C pseudocode for a static function using a configured local Ghidra installation.",json!({"address":addr}),&["address"]),
         tool("xrefs","Return direct control-flow references to an address. Indirect/data references are not recovered.",json!({"address":addr}),&["address"]),
         tool("read_bytes","Read file-backed bytes at a virtual address.",json!({"address":addr,"size":size}),&["address"]),
         tool("annotate","Persist rename/comment and audit event; expected_revision enables conflict detection (0=create).",json!({"address":addr,"name":str_,"comment":str_,"author":str_,"expected_revision":{"type":"integer","minimum":0}}),&["address"]),

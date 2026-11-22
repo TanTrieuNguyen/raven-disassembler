@@ -6,9 +6,9 @@ Source review date: 2026-11-22. Public documentation was inspected; no IDA execu
 
 | Requested item | Working implementation in this release | Remaining work / exact boundary |
 |---|---|---|
-| IDA Pro GUI | Native Rust/egui workbench, functions, assembly, block/successor view, sections, imports/exports, strings, comments/renames, tool console | Independent UI. No high-level decompiler, debugger, full type system, patch assembler, signature normalization, IDB compatibility or broad processor parity |
+| IDA Pro GUI | Native Rust/egui workbench, functions, assembly, block/successor view, sections, imports/exports, strings, comments/renames, tool console | Independent UI. Optional Ghidra pseudocode. No native decompiler, debugger, full type system, patch assembler, signature normalization, IDB compatibility or broad processor parity |
 | IDA Pro Headless | Rust library plus CLI inventory, disassembly, per-function analysis, JSON reports, batch with per-file errors | Same core as GUI; capped static scan, no full-program decompilation. Batch is sequential |
-| IDA MCP | 23 tools, stdio JSON-RPC, initialize/ping/list/call, shared SQLite annotations | Independent tool names/schema. No compatibility promise with official IDA MCP or existing IDA plugins. No Streamable HTTP or fleet multiplexing |
+| IDA MCP | 25 tools, stdio JSON-RPC, initialize/ping/list/call, shared SQLite annotations | Independent tool names/schema. No compatibility promise with official IDA MCP or existing IDA plugins. No Streamable HTTP or fleet multiplexing |
 | IDA Home / Free | Same independent engine without artificial license tiers | No Hex-Rays product/license integration |
 | Malware Analysis | Static entropy, ASCII strings, IOC candidates, API-name markers | No automatic unpacker, emulator, sandbox connector, deobfuscator or verdict engine |
 | Assist | Explicit CLI/MCP invocation of configurable chat-completions endpoint using bounded static context; no key required for local endpoints | No built-in model; no autonomous tool loop, solver, emulation, or device/runtime reasoning; real provider not tested |
@@ -22,7 +22,7 @@ Source review date: 2026-11-22. Public documentation was inspected; no IDA execu
 
 ## Formats and analysis boundaries
 
-- Inventory: thin ELF, PE/COFF and Mach-O through the `object` crate. Universal Mach-O must be thinned externally. Archives, firmware containers, .NET and DWARF types are not reconstructed.
+- Inventory: thin ELF, PE/COFF and Mach-O through the `object` crate, and raw images with explicit CPU mode, endianness and base. Universal Mach-O must be thinned externally. Archives, firmware containers, .NET and DWARF types are not reconstructed.
 - Disassembly: x86-32, x86-64, ARM, Thumb (odd address selects Thumb) and AArch64 through Capstone's C engine behind Rust bindings. The implementation is Rust, but third-party C code remains in Capstone and SQLite; it is not a pure-Rust-from-scratch replacement.
 - ASCII strings: minimum four bytes, bounded collection. Not UTF-16/string decryption.
 - Automatic direct-control-flow scan: first 2 MiB of executable section bytes in aggregate; linear sweep can interpret data as code. Symbol, entry and direct-call seeds are candidates. Stripped code, indirect calls, exception control flow and data xrefs remain incomplete/unknown.
