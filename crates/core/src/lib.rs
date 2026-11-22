@@ -121,7 +121,10 @@ pub struct RawMapping {
 
 fn read_input(path: &Path) -> Result<Vec<u8>> {
     use std::io::Read;
-    anyhow::ensure!(std::fs::metadata(path)?.is_file(), "input must be a regular file");
+    anyhow::ensure!(
+        std::fs::metadata(path)?.is_file(),
+        "input must be a regular file"
+    );
     let file = std::fs::File::open(path).context("open binary")?;
     let metadata = file.metadata().context("reading binary metadata")?;
     if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
