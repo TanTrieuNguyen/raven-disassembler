@@ -18,7 +18,7 @@ version = re.search(r'^version = "([^"]+)"', (root / "Cargo.toml").read_text(), 
 suffix = ".exe" if windows else ""
 release = root / "target" / target / "release"
 executables = [release / (name + suffix) for name in ("raven", "raven-gui", "raven-mcp")]
-cli, _, mcp = executables
+cli, gui, mcp = executables
 analysis = json.loads(subprocess.check_output(
     [str(cli), "--database", ":memory:", "analyze", str(cli)], timeout=180))
 expected_arch = target.split("-", 1)[0].replace("i686", "x86")
@@ -27,6 +27,15 @@ if analysis["architecture"] != expected_arch:
 expected_format = "Pe" if windows else "MachO" if macos else "Elf"
 if analysis["format"] != expected_format:
     raise RuntimeError(f"expected {expected_format}, received {analysis['format']}")
+if windows:
+    for program in (cli, gui, mcp):
+        metadata = analysis if program == cli else json.loads(subprocess.check_output(
+            [str(cli), "--database", ":memory:", "analyze", str(program)], timeout=180))
+        runtimes = sorted({item["library"] for item in metadata["imports"]
+                           if item["library"].upper().startswith(("VCRUNTIME", "MSVCP", "MSVCR"))})
+        if runtimes:
+            raise RuntimeError(f"{program.name} has external MSVC runtime dependencies: {runtimes}")
+
 requests = [
     {"jsonrpc": "2.0", "id": 1, "method": "initialize",
      "params": {"protocolVersion": "2025-11-25"}},
