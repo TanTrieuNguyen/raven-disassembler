@@ -71,7 +71,7 @@ if macos:
             "NSHighResolutionCapable": True,
         }))
         app = contents.parent
-        for executable in executables:
+        for executable in (cli, mcp):
             subprocess.run(["codesign", "--force", "--sign", "-", str(binaries / executable.name)], check=True)
         subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)

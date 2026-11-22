@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      targets:
+        description: Optional JSON matrix for an individual platform rebuild
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -12,23 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-2022
-            target: i686-pc-windows-msvc
-          - runner: windows-2022
-            target: x86_64-pc-windows-msvc
-          - runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
-          - runner: ubuntu-22.04
-            target: i686-unknown-linux-gnu
-          - runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-          - runner: macos-15
-            target: aarch64-apple-darwin
+        include: >-
+          ${{ fromJSON(inputs.targets || '[{"runner":"windows-2022","target":"i686-pc-windows-msvc"},{"runner":"windows-2022","target":"x86_64-pc-windows-msvc"},{"runner":"windows-11-arm","target":"aarch64-pc-windows-msvc"},{"runner":"ubuntu-22.04","target":"i686-unknown-linux-gnu"},{"runner":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu"},{"runner":"ubuntu-22.04-arm","target":"aarch64-unknown-linux-gnu"},{"runner":"macos-15-intel","target":"x86_64-apple-darwin"},{"runner":"macos-15","target":"aarch64-apple-darwin"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     env:
@@ -71,7 +61,7 @@ jobs:
 
   windows-setup:
     needs: desktop
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.targets }}
     runs-on: windows-2022
     timeout-minutes: 12
     steps:
