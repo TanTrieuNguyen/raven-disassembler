@@ -2,6 +2,9 @@
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p artifacts/RAVEN-Disassembler/RAVEN\ Disassembler.app/Contents/MacOS
+mkdir -p 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Resources'
+sips -s format icns -z 512 512 crates/app/assets/raven-logo.jpg \
+    --out 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Resources/Raven.icns'
 cp target/release/raven-gui 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/MacOS/raven-gui'
 cp target/release/raven target/release/raven-mcp artifacts/RAVEN-Disassembler/
 cat > 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Info.plist' <<'PLIST'
@@ -10,6 +13,7 @@ cat > 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Info.plist' 
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>dev.raven.disassembler</string>
 <key>CFBundleName</key><string>RAVEN Disassembler</string>
+<key>CFBundleIconFile</key><string>Raven.icns</string>
 <key>CFBundleExecutable</key><string>raven-gui</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>

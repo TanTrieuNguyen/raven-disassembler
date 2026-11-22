@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = []
-gui = ["dep:eframe"]
+gui = ["dep:eframe", "dep:image"]
 
 [dependencies]
 raven-core = { path = "../core" }
@@ -19,6 +19,7 @@ sha2 = "0.10"
 hex = "0.4"
 regex = "1"
 reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"]}
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
 eframe = {version = "0.31", optional = true, default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"]}
 tempfile = "3.27.0"
 

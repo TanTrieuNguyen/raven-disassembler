@@ -1,4 +1,10 @@
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
+#[path = "gui/workbench.rs"]
+mod workbench;
+
+const LISTING: usize = 0;
+const GRAPH: usize = 1;
+const HEX: usize = 10;
 use raven::{parse_address, Workspace};
 use raven_core::{Analysis, FunctionDetail};
 use serde_json::{json, Value};
@@ -9,6 +15,13 @@ struct App {
     query: String,
     string_query: String,
     address: String,
+    cursor: Option<u64>,
+    back: Vec<u64>,
+    forward: Vec<u64>,
+    graph_zoom: f32,
+    inspector_code: bool,
+    logo: Option<egui::TextureHandle>,
+    listing_scroll: bool,
     tab: usize,
     detail: Option<FunctionDetail>,
     output: String,
@@ -31,6 +44,13 @@ impl App {
             query: String::new(),
             string_query: String::new(),
             address: String::new(),
+            cursor: None,
+            back: Vec::new(),
+            forward: Vec::new(),
+            graph_zoom: 1.0,
+            inspector_code: false,
+            logo: None,
+            listing_scroll: false,
             tab: 0,
             detail: None,
             output: String::new(),
@@ -62,8 +82,7 @@ impl App {
             let _ = tx.send(Analysis::open(path));
         });
     }
-    fn select(&mut self, address: u64) {
-        self.address = format!("{address:#x}");
+    fn set_function(&mut self, address: u64) -> bool {
         match self.ws.a().and_then(|a| a.function(address)) {
             Ok(detail) => {
                 self.name = detail.function.name.clone();
@@ -79,11 +98,227 @@ impl App {
                     }
                 }
                 self.detail = Some(detail);
-                self.status = format!("Selected {address:#x}");
+                true
             }
-            Err(e) => self.status = format!("{e:#}"),
+            Err(error) => {
+                self.status = format!("{error:#}");
+                false
+            }
         }
     }
+    fn move_cursor(&mut self, address: u64) -> bool {
+        let Ok(analysis) = self.ws.a() else {
+            return false;
+        };
+        let arm = analysis.architecture == "arm";
+        let normalized = if arm { address & !1 } else { address };
+        let functions = &analysis.functions;
+        let exact = functions
+            .binary_search_by_key(&address, |function| function.address)
+            .ok();
+        let index = functions.partition_point(|function| {
+            (if arm {
+                function.address & !1
+            } else {
+                function.address
+            }) <= normalized
+        });
+        let function = exact
+            .or_else(|| {
+                index.checked_sub(1).filter(|index| {
+                    let function = &functions[*index];
+                    let start = if arm {
+                        function.address & !1
+                    } else {
+                        function.address
+                    };
+                    normalized - start < function.size
+                })
+            })
+            .map(|index| functions[index].address);
+        if let Some(function) = function {
+            let changed = self
+                .detail
+                .as_ref()
+                .is_none_or(|detail| detail.function.address != function);
+            if changed && !self.set_function(function) {
+                return false;
+            }
+            if changed && self.decompiling.is_none() {
+                self.pseudocode.clear();
+            }
+        } else if analysis.read_bytes(address, 1).is_ok() {
+            self.detail = None;
+            self.tab = HEX;
+        } else {
+            self.status = format!("Address {address:#x} is not backed by the open binary");
+            return false;
+        }
+        self.cursor = Some(address);
+        self.address = format!("{address:#x}");
+        self.status = format!("Selected {address:#x}");
+        self.listing_scroll = true;
+        true
+    }
+
+    fn navigate(&mut self, address: u64) {
+        let previous = self.cursor;
+        if self.move_cursor(address) && previous != Some(address) {
+            if let Some(previous) = previous {
+                self.back.push(previous);
+            }
+            self.forward.clear();
+        }
+    }
+
+    fn history(&mut self, back: bool) {
+        let target = if back {
+            self.back.last()
+        } else {
+            self.forward.last()
+        }
+        .copied();
+        if let (Some(target), Some(current)) = (target, self.cursor) {
+            if self.move_cursor(target) {
+                if back {
+                    self.back.pop();
+                    self.forward.push(current);
+                } else {
+                    self.forward.pop();
+                    self.back.push(current);
+                }
+            }
+        }
+    }
+
+    fn reset_navigation(&mut self) {
+        self.cursor = None;
+        self.address.clear();
+        self.back.clear();
+        self.forward.clear();
+        self.detail = None;
+    }
+
+    fn render_listing(&mut self, ui: &mut egui::Ui) {
+        let Some(detail) = &self.detail else {
+            ui.label("Select a function from the navigator.");
+            return;
+        };
+        ui.heading(&self.name);
+        ui.label(format!(
+            "{:#x} · {} bytes · {} instructions",
+            detail.function.address,
+            detail.function.size,
+            detail.instructions.len()
+        ));
+        let cursor = self.cursor;
+        let selected_index = cursor.and_then(|address| {
+            detail
+                .instructions
+                .iter()
+                .rposition(|row| row.address <= address && address < row.end())
+        });
+        let mut go = None;
+        let mut select = None;
+        let mut scroll = egui::ScrollArea::both().id_salt("assembly");
+        if self.listing_scroll {
+            if let Some(index) = selected_index {
+                scroll = scroll.vertical_scroll_offset(
+                    (index as f32 * (22.0 + ui.spacing().item_spacing.y) - 60.0).max(0.0),
+                );
+            }
+            self.listing_scroll = false;
+        }
+        scroll.show_rows(ui, 22.0, detail.instructions.len(), |ui, range| {
+            for index in range {
+                let row = &detail.instructions[index];
+                ui.horizontal(|ui| {
+                    let address = RichText::new(format!("{:016x}", row.address))
+                        .monospace()
+                        .color(workbench::address_tint(self.dark));
+                    if ui
+                        .selectable_label(Some(index) == selected_index, address)
+                        .clicked()
+                    {
+                        select = Some(row.address);
+                    }
+                    ui.monospace(format!("{:<24}", row.bytes));
+                    ui.monospace(RichText::new(format!("{:<10}", row.mnemonic)).strong());
+                    if let Some(target) = row.target {
+                        if ui.link(RichText::new(&row.operands).monospace()).clicked() {
+                            go = Some(target);
+                        }
+                    } else {
+                        ui.monospace(&row.operands);
+                    }
+                });
+            }
+        });
+        if let Some(address) = go.or(select) {
+            self.navigate(address);
+        }
+    }
+
+    fn render_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.inspector_code, false, "References");
+            ui.selectable_value(&mut self.inspector_code, true, "Pseudocode");
+        });
+        ui.separator();
+        if self.inspector_code {
+            self.render_pseudocode(ui);
+            return;
+        }
+        let (Some(address), Ok(analysis)) = (self.cursor, self.ws.a()) else {
+            ui.label("Select an address to see its references.");
+            return;
+        };
+        ui.monospace(format!("{address:#018x}"));
+        if let Some(detail) = &self.detail {
+            ui.label(format!("{} · {} blocks", self.name, detail.blocks.len()));
+        }
+        ui.separator();
+        let refs = analysis.xrefs(address);
+        let outgoing = self
+            .detail
+            .as_ref()
+            .and_then(|detail| {
+                detail
+                    .instructions
+                    .iter()
+                    .find(|instruction| instruction.address == address)
+            })
+            .and_then(|instruction| instruction.target);
+        let mut jump = None;
+        ui.strong("Outgoing target");
+        if let Some(target) = outgoing {
+            if ui.link(format!("{target:#x}")).clicked() {
+                jump = Some(target);
+            }
+        } else {
+            ui.label("No direct target at this address.");
+        }
+        ui.separator();
+        ui.strong(format!("Incoming references · {}", refs.len()));
+        egui::ScrollArea::vertical()
+            .id_salt("raven-xrefs")
+            .show_rows(ui, 22.0, refs.len(), |ui, range| {
+                for index in range {
+                    let reference = &refs[index];
+                    if ui
+                        .link(format!("{:#x}  {}", reference.from, reference.kind))
+                        .clicked()
+                    {
+                        jump = Some(reference.from);
+                    }
+                }
+            });
+        if let Some(target) = jump {
+            self.tab = LISTING;
+            self.navigate(target);
+        }
+    }
+
     fn start_decompile(&mut self) {
         if let (Some(analysis), Some(detail)) = (&self.ws.analysis, &self.detail) {
             let address = detail.function.address;
@@ -121,7 +356,7 @@ impl App {
                 self.output = serde_json::to_string_pretty(&v).unwrap_or_default();
                 self.status = format!("{tool}: complete");
                 if matches!(tool, "open_raw" | "open_binary" | "close_binary") {
-                    self.detail = None;
+                    self.reset_navigation();
                     self.pseudocode.clear();
                     self.decompiling = None;
                     let first = self.ws.analysis.as_ref().and_then(|analysis| {
@@ -129,7 +364,7 @@ impl App {
                         analysis.functions.first().map(|function| function.address)
                     });
                     if let Some(address) = first {
-                        self.select(address);
+                        self.navigate(address);
                     }
                 }
             }
@@ -139,6 +374,26 @@ impl App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.loading.is_none() {
+            let dropped = ctx.input(|input| {
+                input
+                    .raw
+                    .dropped_files
+                    .iter()
+                    .find_map(|file| file.path.clone())
+            });
+            if let Some(path) = dropped {
+                self.path = path.to_string_lossy().into_owned();
+                self.load();
+            }
+        }
+        if !ctx.wants_keyboard_input()
+            && self.detail.is_some()
+            && ctx.input(|input| input.key_pressed(egui::Key::Space))
+        {
+            self.tab = if self.tab == GRAPH { LISTING } else { GRAPH };
+            self.listing_scroll = self.tab == LISTING;
+        }
         if let Some(worker) = &self.decompiling {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
             match worker.try_recv() {
@@ -175,10 +430,10 @@ impl eframe::App for App {
                     self.ws.analysis = Some(a);
                     self.pseudocode.clear();
                     self.decompiling = None;
-                    self.detail = None;
+                    self.reset_navigation();
                     self.loading = None;
                     if let Some(first) = first {
-                        self.select(first);
+                        self.navigate(first);
                     }
                 }
                 Ok(Err(e)) => {
@@ -200,9 +455,23 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.add_space(8.);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("RAVEN Disassembler").strong().size(22.));
+                if let Some(logo) = &self.logo {
+                    ui.image((logo.id(), egui::vec2(34.0, 34.0)));
+                }
+                ui.label(RichText::new("RAVEN Disassembler").strong().size(20.));
                 ui.separator();
-                ui.label("Static analysis workbench");
+                if ui
+                    .add_enabled(!self.back.is_empty(), egui::Button::new("Back"))
+                    .clicked()
+                {
+                    self.history(true);
+                }
+                if ui
+                    .add_enabled(!self.forward.is_empty(), egui::Button::new("Forward"))
+                    .clicked()
+                {
+                    self.history(false);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.checkbox(&mut self.dark, "Dark theme");
                 });
@@ -298,27 +567,65 @@ impl eframe::App for App {
                                 .on_hover_text(format!("Source: {source}"))
                                 .clicked()
                             {
-                                self.select(*addr);
+                                self.navigate(*addr);
                             }
                         }
                     });
             });
+        egui::SidePanel::right("raven-inspector")
+            .default_width(245.0)
+            .min_width(190.0)
+            .show(ctx, |ui| self.render_inspector(ui));
         egui::CentralPanel::default().show(ctx,|ui|{
-            ui.horizontal_wrapped(|ui|{for(i,name)in ["Disassembly","Control flow","Strings","Sections","Imports / exports","Triage","Metadata","Tools","Coverage","Pseudocode"].iter().enumerate(){if ui.selectable_label(self.tab==i,*name).clicked(){self.tab=i;if i==5{self.invoke("triage",json!({}));}
-if i==6{self.invoke("annotations",json!({}));}}}});
+            ui.horizontal_wrapped(|ui| {
+                for (tab, label) in [
+                    (LISTING, "Disassembly"), (GRAPH, "Control flow"), (HEX, "Hex bytes"),
+                    (9, "Pseudocode"), (2, "Strings"), (3, "Sections"), (4, "Imports / exports"),
+                    (6, "Metadata"), (5, "Triage"), (7, "Tools"), (8, "Coverage"),
+                ] {
+                    if ui.selectable_label(self.tab == tab, label).clicked() {
+                        self.tab = tab;
+                        self.listing_scroll = tab == LISTING;
+                        match tab {
+                            5 => self.invoke("triage", json!({})),
+                            6 => self.invoke("annotations", json!({})),
+                            _ => {}
+                        }
+                    }
+                }
+            });
             ui.separator();
+            if matches!(self.tab, LISTING | GRAPH | HEX) {
+                ui.horizontal(|ui| {
+                    ui.label("Virtual address");
+                    let response = ui.text_edit_singleline(&mut self.address);
+                    if ui.button("Go").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                        match parse_address(&self.address) {
+                            Ok(address) => self.navigate(address),
+                            Err(error) => self.status = error.to_string(),
+                        }
+                    }
+                });
+            }
             match self.tab{
-                0=>{
-                    ui.horizontal(|ui|{ui.label("Virtual address");ui.text_edit_singleline(&mut self.address);if ui.button("Go").clicked(){match parse_address(&self.address){Ok(a)=>self.select(a),Err(e)=>self.status=e.to_string()}}});
-                    if let Some(d)=&self.detail{
-                        ui.heading(&self.name);ui.label(format!("{:#x} · {} bytes · {} instructions · {} blocks",d.function.address,d.function.size,d.instructions.len(),d.blocks.len()));
-                        let rows=&d.instructions;
-                        egui::ScrollArea::both().id_salt("assembly").show_rows(ui,22.,rows.len(),|ui,range|{for index in range{let i=&rows[index];ui.horizontal(|ui|{ui.monospace(RichText::new(format!("{:016x}",i.address)).color(if self.dark{Color32::from_rgb(140,175,195)}else{Color32::from_rgb(45,75,95)}));ui.monospace(format!("{:<24}",i.bytes));ui.monospace(RichText::new(format!("{:<10}",i.mnemonic)).strong());ui.monospace(&i.operands);});}});
-                    }else{ui.label("Open a binary and choose a function.");}
+                LISTING => self.render_listing(ui),
+                GRAPH => {
+                    if let Some(detail) = &self.detail {
+                        if let Some(address) = workbench::graph_view(ui, detail, self.cursor, &mut self.graph_zoom) {
+                            self.navigate(address);
+                        }
+                    } else {
+                        ui.label("Select a function to see its control flow.");
+                    }
                 },
-                1=>{
-                    ui.heading("Control flow");ui.label("Reachable basic blocks and direct successor addresses");
-                    if let Some(d)=&self.detail{egui::ScrollArea::both().show(ui,|ui|{for block in &d.blocks{egui::Frame::group(ui.style()).show(ui,|ui|{ui.strong(format!("block_{:x}",block.address));for i in &block.instructions{ui.monospace(format!("{:x}  {} {}",i.address,i.mnemonic,i.operands));}ui.separator();ui.monospace(format!("Successors: {}",block.successors.iter().map(|s|format!("{s:#x}")).collect::<Vec<_>>().join(", ")));});ui.add_space(12.);}});}
+                HEX => {
+                    if let (Some(address), Some(analysis)) = (self.cursor, &self.ws.analysis) {
+                        if let Some(address) = workbench::hex_view(ui, analysis, address) {
+                            self.navigate(address);
+                        }
+                    } else {
+                        ui.label("Open a binary and select an address.");
+                    }
                 },
                 2=>{ui.heading("Strings");ui.label("Search string content");ui.text_edit_singleline(&mut self.string_query);if let Some(a)=&self.ws.analysis{let rows=a.strings.iter().filter(|s|s.value.contains(&self.string_query)).collect::<Vec<_>>();egui::ScrollArea::both().show_rows(ui,22.,rows.len(),|ui,range|{for n in range{let s=rows[n];ui.monospace(format!("{:>18}  {}",s.address.map(|a|format!("{a:#x}")).unwrap_or_else(||format!("file+{:x}",s.file_offset)),s.value));}});}},
                 3=>{ui.heading("Sections");if let Some(a)=&self.ws.analysis{egui::ScrollArea::both().show(ui,|ui|{egui::Grid::new("sections").striped(true).min_col_width(100.).show(ui,|ui|{for h in ["Name","Virtual address","Size","File offset","Entropy","Executable"]{ui.strong(h);}ui.end_row();for s in &a.sections{ui.label(&s.name);ui.monospace(format!("{:#x}",s.address));ui.label(s.size.to_string());ui.monospace(format!("{:#x}",s.file_offset));ui.label(format!("{:.3}",s.entropy));ui.label(if s.executable{"yes"}else{"no"});ui.end_row();}});});}},
@@ -326,8 +633,8 @@ if i==6{self.invoke("annotations",json!({}));}}}});
                 5=>{ui.heading("Static triage");ui.label("String and entropy indicators are candidates; they do not establish malicious behavior.");if ui.button("Refresh triage").clicked(){self.invoke("triage",json!({}));}egui::ScrollArea::both().show(ui,|ui|{ui.monospace(&self.output);});},
                 6=>{
                     ui.heading("Annotation workspace");ui.label("Selected virtual address");ui.monospace(&self.address);ui.label("Function name");ui.text_edit_singleline(&mut self.name);ui.label("Comment");ui.add(egui::TextEdit::multiline(&mut self.comment).desired_rows(4).desired_width(f32::INFINITY));
-                    ui.horizontal(|ui|{if ui.add_enabled(self.detail.is_some(),egui::Button::new("Save revision")).clicked(){if let Ok(address)=parse_address(&self.address){match self.ws.call("annotate",&json!({"address":address,"name":self.name,"comment":self.comment,"author":"gui","expected_revision":self.revision})){Ok(v)=>{self.revision=v["revision"].as_u64().unwrap_or(0);self.status=format!("Annotation revision {} saved",self.revision);self.invoke("annotations",json!({}));},Err(e)=>self.status=format!("Save failed: {e:#}")}}}
-if ui.button("Reload selected").clicked(){if let Ok(a)=parse_address(&self.address){self.select(a);}}
+                    ui.horizontal(|ui|{if ui.add_enabled(self.detail.is_some(),egui::Button::new("Save revision")).clicked(){if let Some(address)=self.detail.as_ref().map(|detail| detail.function.address){match self.ws.call("annotate",&json!({"address":address,"name":self.name,"comment":self.comment,"author":"gui","expected_revision":self.revision})){Ok(v)=>{self.revision=v["revision"].as_u64().unwrap_or(0);self.status=format!("Annotation revision {} saved",self.revision);self.invoke("annotations",json!({}));},Err(e)=>self.status=format!("Save failed: {e:#}")}}}
+if ui.button("Reload selected").clicked(){if let Some(a)=self.detail.as_ref().map(|detail| detail.function.address){self.set_function(a);}}
 if ui.button("Audit history").clicked(){self.invoke("audit_log",json!({}));}});
                     egui::ScrollArea::both().show(ui,|ui|{ui.monospace(&self.output);});
                 },
@@ -347,9 +654,11 @@ if ui.button("Audit history").clicked(){self.invoke("audit_log",json!({}));}});
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let path = args.next().unwrap_or_default();
-    let app = App::new(raven::default_database(), path)?;
+    let mut app = App::new(raven::default_database(), path)?;
+    let icon = workbench::icon()?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(icon.clone())
             .with_inner_size([1440., 900.])
             .with_min_inner_size([960., 600.]),
         ..Default::default()
@@ -367,8 +676,50 @@ fn main() -> anyhow::Result<()> {
                     .text_styles
                     .insert(egui::TextStyle::Monospace, egui::FontId::monospace(13.));
             });
+            let logo = egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width as usize, icon.height as usize],
+                &icon.rgba,
+            );
+            app.logo = Some(cc.egui_ctx.load_texture(
+                "raven-logo",
+                logo,
+                egui::TextureOptions::LINEAR,
+            ));
             Ok(Box::new(app))
         }),
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_tracks_branches_history_and_binary_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("branch.bin");
+        // call 0x1006; ret; ret
+        std::fs::write(&path, [0xe8, 1, 0, 0, 0, 0xc3, 0xc3]).unwrap();
+        let mut app = App::new(PathBuf::from(":memory:"), String::new()).unwrap();
+        app.invoke(
+            "open_raw",
+            json!({"path":path, "mode":"x86_64", "base":"0x1000"}),
+        );
+        assert_eq!(app.cursor, Some(0x1000));
+        assert_eq!(
+            app.detail.as_ref().unwrap().instructions[0].target,
+            Some(0x1006)
+        );
+        app.navigate(0x1006);
+        assert_eq!(app.detail.as_ref().unwrap().function.address, 0x1006);
+        app.navigate(0xffff);
+        assert_eq!(app.cursor, Some(0x1006));
+        app.history(true);
+        assert_eq!(app.cursor, Some(0x1000));
+        app.history(false);
+        assert_eq!(app.cursor, Some(0x1006));
+        app.invoke("close_binary", json!({}));
+        assert!(app.back.is_empty() && app.forward.is_empty() && app.cursor.is_none());
+    }
 }

@@ -6,7 +6,7 @@ Source review date: 2026-11-22. Public documentation was inspected; no IDA execu
 
 | Requested item | Working implementation in this release | Remaining work / exact boundary |
 |---|---|---|
-| IDA Pro GUI | Native Rust/egui workbench, functions, assembly, block/successor view, sections, imports/exports, strings, comments/renames, tool console | Independent UI. Optional Ghidra pseudocode. No native decompiler, debugger, full type system, patch assembler, signature normalization, IDB compatibility or broad processor parity |
+| IDA Pro GUI | Native Rust/egui workbench, functions, assembly, interactive CFG, synchronized Hex bytes and code-reference inspector, sections, imports/exports, strings, comments/renames, tool console | Independent UI. Optional Ghidra pseudocode. No native decompiler, debugger, full type system, patch assembler, signature normalization, IDB compatibility or broad processor parity |
 | IDA Pro Headless | Rust library plus CLI inventory, disassembly, per-function analysis, JSON reports, batch with per-file errors | Same core as GUI; capped static scan, no full-program decompilation. Batch is sequential |
 | IDA MCP | 25 tools, stdio JSON-RPC, initialize/ping/list/call, shared SQLite annotations | Independent tool names/schema. No compatibility promise with official IDA MCP or existing IDA plugins. No Streamable HTTP or fleet multiplexing |
 | IDA Home / Free | Same independent engine without artificial license tiers | No Hex-Rays product/license integration |

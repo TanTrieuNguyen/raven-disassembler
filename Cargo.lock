@@ -1808,6 +1808,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2902,6 +2904,7 @@ dependencies = [
  "clap",
  "eframe",
  "hex",
+ "image",
  "raven-core",
  "raven-store",
  "regex",

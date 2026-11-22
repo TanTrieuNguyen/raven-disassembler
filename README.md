@@ -1,5 +1,7 @@
 # RAVEN Disassembler
 
+<img src="crates/app/assets/raven-logo.jpg" alt="RAVEN Disassembler" width="220">
+
 Bàn phân tích binary viết bằng Rust: GUI native, CLI headless, MCP stdio và thư viện dùng chung. Dự án độc lập theo yêu cầu tham chiếu Hex-Rays; **bản 0.1 chưa tương đương đầy đủ IDA Pro hay các add-on**. Xem [bảng tính năng](docs/FEATURE-MATRIX.md) để biết chính xác phần đang chạy và phần còn thiếu.
 
 ## Tải app cho Windows và Linux
@@ -28,7 +30,7 @@ cargo build --release --features gui --bins
 
 Địa chỉ là **virtual address**; `--size` tính bằng byte. Tìm địa chỉ thực từ `analyze` hoặc GUI, không dùng địa chỉ minh họa trên một binary khác. Binary không được thực thi khi phân tích.
 
-GUI: nhập đường dẫn rồi Open binary; chọn hàm; dùng tabs Assembly, Blocks, Strings, Sections, Imports, Triage, Metadata, Tools. GUI có giao diện sáng/tối và tải binary trong worker. Metadata lưu theo SHA-256 vào SQLite. `Save report` ghi `<binary-path>.raven.json`.
+GUI: nhập đường dẫn và bấm **Open binary** hoặc kéo file vào cửa sổ. Chọn hàm ở navigator. Disassembly, Control flow, Hex bytes và Inspector dùng chung địa chỉ. Bấm địa chỉ nhảy trong disassembly hoặc tham chiếu trong Inspector để điều hướng. Chọn Pseudocode trong Inspector để xem cạnh disassembly hoặc đồ thị. Dùng **Back** và **Forward** để quay lại. Phím **Space** chuyển giữa disassembly và đồ thị khi ô nhập liệu không có focus. **Save report** ghi `<binary-path>.raven.json`.
 
 ## MCP
 
