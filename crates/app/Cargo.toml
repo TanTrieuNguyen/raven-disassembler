@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = []
-gui = ["dep:eframe", "dep:image"]
+gui = ["dep:eframe", "dep:image", "dep:rfd"]
 
 [dependencies]
 raven-core = { path = "../core" }
@@ -22,6 +22,7 @@ reqwest = {version = "0.12", default-features = false, features = ["blocking", "
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
 eframe = {version = "0.31", optional = true, default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"]}
 tempfile = "3.27.0"
+rfd = { version = "0.15", optional = true }
 
 [[bin]]
 name = "raven"

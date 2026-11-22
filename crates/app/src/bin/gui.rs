@@ -493,12 +493,32 @@ impl eframe::App for App {
             ui.add_space(8.);
             ui.horizontal(|ui| {
                 ui.label("Binary path");
-                ui.add(
+                let path_input = ui.add(
                     egui::TextEdit::singleline(&mut self.path)
-                        .desired_width((ui.available_width() - 190.).max(160.)),
+                        .desired_width((ui.available_width() - 270.).max(160.)),
                 );
+                if path_input.lost_focus()
+                    && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    && self.loading.is_none()
+                    && !self.path.trim().is_empty()
+                {
+                    self.load();
+                }
                 if ui
                     .add_enabled(self.loading.is_none(), egui::Button::new("Open binary"))
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new().set_title("Open binary").pick_file()
+                    {
+                        self.path = path.to_string_lossy().into_owned();
+                        self.load();
+                    }
+                }
+                if ui
+                    .add_enabled(
+                        self.loading.is_none() && !self.path.trim().is_empty(),
+                        egui::Button::new("Load path"),
+                    )
                     .clicked()
                 {
                     self.load();

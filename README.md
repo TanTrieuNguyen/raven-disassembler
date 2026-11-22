@@ -42,7 +42,7 @@ cargo build --locked --release --features gui --bins
 ./target/release/raven decompile program.bin 0x401000 --native
 ```
 
-Addresses are virtual addresses. Replace the example addresses with addresses from your binary. The disassembly size is in bytes. In the GUI, open or drop a binary and select a function. Space toggles between linear disassembly and the graph when a text field is not focused. Pseudocode can appear in its own tab or beside the listing in the inspector.
+Addresses are virtual addresses. Replace the example addresses with addresses from your binary. The disassembly size is in bytes. In the GUI, choose **Open binary** to browse for a file, or enter a path and choose **Load path**. You can also drop a file into the window and select a function. Space toggles between linear disassembly and the graph when a text field is not focused. Pseudocode can appear in its own tab or beside the listing in the inspector.
 
 For optional Ghidra pseudocode, set `RAVEN_GHIDRA_HOME` to the absolute path of a Ghidra installation and install the JDK required by that version. Select **Open Ghidra pseudocode** in the GUI or omit `--native` in the CLI.
 
