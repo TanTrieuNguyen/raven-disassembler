@@ -1,3 +1,4 @@
+mod collaboration;
 pub mod decompile;
 pub mod extras;
 pub mod protocol;

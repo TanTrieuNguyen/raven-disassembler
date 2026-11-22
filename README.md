@@ -88,6 +88,12 @@ Tên tool trong `call` dùng underscore: `signature_save`, với `{"address":"0x
 
 Annotation có revision. `expected_revision:0` tạo mới; revision hiện tại dùng để sửa. Không khớp sẽ báo conflict và giữ dữ liệu cũ. CLI/MCP có thể bỏ expected revision để cập nhật vô điều kiện; GUI luôn dùng revision. `import_annotations` yêu cầu map revision cho tất cả địa chỉ trong document; import là một transaction. JSON export có thể đưa vào Git bằng công cụ Git của bạn; chưa có đồng bộ Git/remote tự động.
 
+## Cộng tác annotation từ xa
+
+`raven-mcp --database /srv/raven/team.sqlite --shared-project WORKSPACE_SHA256 --shared-author Alice` mở chế độ annotation cho một workspace. Đặt tiến trình này ở máy chia sẻ và kết nối MCP qua SSH stdio. Mỗi người dùng nên có SSH key với forced command do quản trị viên cấu hình, cố định database, workspace ID và tác giả cho key đó. Cấu hình client dùng `ssh` với đối số `["-T", "raven@your-host"]`. Máy chủ SSH đảm nhiệm xác thực và mã hóa.
+
+Chế độ này chỉ có `project_info`, `annotations`, `annotate`, `audit_log`, `export_annotations`. Update bắt buộc dùng revision vừa đọc, hoặc `0` để tạo mới. Không có mở file, đọc bytes, chạy plugin hay ghi báo cáo qua client chia sẻ. Workspace ID lấy từ SHA-256 binary đã phân tích, hoặc `raw_mapping.workspace_id` cho ảnh raw. Đây là chia sẻ annotation qua MCP, chưa có đồng bộ desktop hoặc merge IDB.
+
 ## Assist
 
 Cấu hình endpoint chat-completions tương thích (có thể là model local):

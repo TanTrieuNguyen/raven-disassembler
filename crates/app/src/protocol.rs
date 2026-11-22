@@ -1,7 +1,7 @@
 //! MCP stdio JSON-RPC transport. No diagnostic output is written to stdout.
 use crate::Workspace;
 use serde_json::{json, Value};
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
     json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":properties,"required":required,"additionalProperties":false}})
@@ -57,14 +57,28 @@ pub fn tools() -> Vec<Value> {
 pub struct Server {
     pub workspace: Workspace,
     initialized: bool,
+    project: Option<crate::collaboration::Project>,
 }
 impl Server {
     pub fn new(workspace: Workspace) -> Self {
         Self {
             workspace,
             initialized: false,
+            project: None,
         }
     }
+    pub fn shared(workspace: Workspace, key: String, author: String) -> anyhow::Result<Self> {
+        let mut server = Self::new(workspace);
+        server.project = Some(crate::collaboration::Project::new(key, author)?);
+        Ok(server)
+    }
+
+    fn available_tools(&self) -> Vec<Value> {
+        self.project
+            .as_ref()
+            .map_or_else(tools, crate::collaboration::Project::tools)
+    }
+
     pub fn handle(&mut self, request: Value) -> Option<Value> {
         let id = request.get("id").cloned();
         let method = request.get("method").and_then(Value::as_str);
@@ -86,11 +100,11 @@ impl Server {
                 } else {
                     "2025-11-25"
                 };
-                json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"raven-mcp","version":env!("CARGO_PKG_VERSION")},"instructions":"Independent Rust analysis engine, not Hex-Rays IDA. Inspect limitations before inferring absence. Addresses are virtual; disassembly size is bytes. Annotation storage is shared by database path."})
+                json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"raven-mcp","version":env!("CARGO_PKG_VERSION")},"instructions":if self.project.is_some() {"Shared annotations for one bound project. Updates require the observed revision."} else {"RAVEN static analysis. Addresses are virtual and disassembly size is in bytes."}})
             }
             "ping" => json!({}),
             _ if !self.initialized => return Some(error(id, -32002, "Initialize first")),
-            "tools/list" => json!({"tools":tools()}),
+            "tools/list" => json!({"tools":self.available_tools()}),
             "tools/call" => {
                 let Some(name) = params["name"].as_str() else {
                     return Some(error(id, -32602, "Missing tool name"));
@@ -99,10 +113,14 @@ impl Server {
                 if !args.is_object() {
                     return Some(error(id, -32602, "arguments must be an object"));
                 }
-                if !tools().iter().any(|t| t["name"] == name) {
+                if !self.available_tools().iter().any(|t| t["name"] == name) {
                     return Some(error(id, -32602, "Unknown tool"));
                 }
-                match self.workspace.call(name, &args) {
+                let result = match &self.project {
+                    Some(project) => project.call(&mut self.workspace, name, &args),
+                    None => self.workspace.call(name, &args),
+                };
+                match result {
                     Ok(value) => {
                         json!({"content":[{"type":"text","text":serde_json::to_string(&value).unwrap()}],"isError":false})
                     }
@@ -120,11 +138,30 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
 }
 pub fn serve(workspace: Workspace) -> anyhow::Result<()> {
+    serve_server(Server::new(workspace))
+}
+
+pub fn serve_server(mut server: Server) -> anyhow::Result<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
-    let mut server = Server::new(workspace);
-    for line in stdin.lock().lines() {
-        let line = line?;
+    let mut input = stdin.lock();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        const SHARED_FRAME_LIMIT: u64 = 64 * 1024;
+        let size = if server.project.is_some() {
+            (&mut input)
+                .take(SHARED_FRAME_LIMIT + 1)
+                .read_line(&mut line)?
+        } else {
+            input.read_line(&mut line)?
+        };
+        if size == 0 {
+            break;
+        }
+        if server.project.is_some() && size as u64 > SHARED_FRAME_LIMIT {
+            anyhow::bail!("shared request exceeds the 64 KiB frame limit");
+        }
         if line.trim().is_empty() {
             continue;
         }

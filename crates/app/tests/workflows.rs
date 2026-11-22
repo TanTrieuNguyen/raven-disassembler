@@ -502,3 +502,60 @@ fn native_lifter_and_xrefs_use_typed_operands() {
         .unwrap();
     assert!(disasm[0]["target"].is_null());
 }
+
+#[test]
+fn shared_annotations_use_host_author_and_revisions_across_connections() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("shared.sqlite");
+    let key = "ab".repeat(32);
+    fn client(db: &std::path::Path, key: &str, author: &str) -> Server {
+        let mut server = Server::shared(
+            Workspace::new(db).unwrap(),
+            key.to_owned(),
+            author.to_owned(),
+        )
+        .unwrap();
+        server
+            .handle(json!({"jsonrpc":"2.0","method":"initialize","id":1}))
+            .unwrap();
+        server
+    }
+    fn call(server: &mut Server, method: &str, arguments: Value) -> Value {
+        server
+            .handle(json!({"jsonrpc":"2.0","method":"tools/call","id":2,
+            "params":{"name":method,"arguments":arguments}}))
+            .unwrap()
+    }
+    let mut alice = client(&db, &key, "Alice");
+    let mut bob = client(&db, &key, "Bob");
+    let first = call(
+        &mut alice,
+        "annotate",
+        json!({"address":"0x1000","name":"sum","expected_revision":0}),
+    );
+    assert_eq!(first["result"]["isError"], false);
+    let list = call(&mut bob, "annotations", json!({}));
+    let annotations: Value =
+        serde_json::from_str(list["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(annotations[0]["author"], "Alice");
+    let conflict = call(
+        &mut bob,
+        "annotate",
+        json!({"address":"0x1000","comment":"stale","expected_revision":0}),
+    );
+    assert_eq!(conflict["result"]["isError"], true);
+    let forged = call(
+        &mut bob,
+        "annotate",
+        json!({"address":"0x1000","name":"forged","expected_revision":1,"author":"Alice"}),
+    );
+    assert_eq!(forged["result"]["isError"], true);
+    let next = call(
+        &mut bob,
+        "annotate",
+        json!({"address":"0x1000","comment":"reviewed","expected_revision":1}),
+    );
+    assert_eq!(next["result"]["isError"], false);
+    let forbidden = call(&mut bob, "open_binary", json!({"path":"/etc/passwd"}));
+    assert_eq!(forbidden["error"]["code"], -32602);
+}
