@@ -95,6 +95,7 @@ if not windows and not macos:
     deb = out / f"{name}.deb"
     with tempfile.TemporaryDirectory(prefix="raven-deb-") as temporary:
         staging = pathlib.Path(temporary)
+        staging.chmod(0o755)
         for name_ in ("DEBIAN", "usr/bin", "usr/share/applications", "usr/share/doc/raven-disassembler"):
             (staging / name_).mkdir(parents=True)
         (staging / "DEBIAN/control").write_text(
