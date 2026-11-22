@@ -450,3 +450,55 @@ fn raw_thumb_uses_explicit_mapping_and_separates_annotations() {
         json!([])
     );
 }
+
+#[test]
+fn native_lifter_and_xrefs_use_typed_operands() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("flat.bin");
+    let mut image = vec![0x90; 40];
+    // mov eax,edi; add eax,esi; ret
+    image[..5].copy_from_slice(&[0x89, 0xf8, 0x01, 0xf0, 0xc3]);
+    // call [rip+0x0a], using the fixed pointer at 0x1020.
+    image[16..22].copy_from_slice(&[0xff, 0x15, 0x0a, 0, 0, 0]);
+    image[22] = 0xc3;
+    image[32..40].copy_from_slice(&0x1000u64.to_le_bytes());
+    std::fs::write(&file, image).unwrap();
+    let mut workspace = Workspace::new(std::path::Path::new(":memory:")).unwrap();
+    workspace
+        .call(
+            "open_raw",
+            &json!({"path":file,"mode":"x86_64","base":"0x1000"}),
+        )
+        .unwrap();
+    let result = workspace
+        .call(
+            "emulate_function",
+            &json!({
+                "address":"0x1000","arguments":["0xffffffff",2]
+            }),
+        )
+        .unwrap();
+    assert_eq!(result["return_value"], "0x1");
+    assert_eq!(result["argument_widths"], json!([32, 32]));
+    assert_eq!(
+        result["prototype"],
+        "uint32_t raven_function(uint32_t arg0, uint32_t arg1)"
+    );
+    let outgoing = workspace
+        .call("xrefs", &json!({"address":"0x1010","direction":"outgoing"}))
+        .unwrap();
+    assert!(outgoing
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["to"] == 0x1020 && item["kind"] == "data-read"));
+    assert!(outgoing
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["to"] == 0x1000 && item["kind"] == "indirect-call-candidate"));
+    let disasm = workspace
+        .call("disassemble", &json!({"address":"0x1010","size":6}))
+        .unwrap();
+    assert!(disasm[0]["target"].is_null());
+}

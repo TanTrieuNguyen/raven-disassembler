@@ -130,8 +130,13 @@ impl Workspace {
                 self.analysis = Some(analysis);
                 Ok(value)
             }
-            "open_binary" => {
-                let analysis = Analysis::open(Path::new(text(args, "path")?))?;
+            "open_binary" | "open_gzip" => {
+                let path = text(args, "path")?;
+                let analysis = if name == "open_gzip" {
+                    Analysis::open_gzip(path)?
+                } else {
+                    Analysis::open(path)?
+                };
                 let value = serde_json::to_value(&analysis)?;
                 self.analysis = Some(analysis);
                 Ok(value)
@@ -195,9 +200,56 @@ impl Workspace {
                 Ok(serde_json::to_value(detail)?)
             }
             "decompile_function" => decompile::function(self.a()?, address(args, "address")?),
-            "xrefs" => Ok(serde_json::to_value(
-                self.a()?.xrefs(address(args, "address")?),
-            )?),
+            "inspect_core" => raven_core::inspect_core(text(args, "path")?),
+            "debug_types" => {
+                let query = args["query"].as_str().unwrap_or("");
+                let offset = args["offset"].as_u64().unwrap_or_default();
+                let limit = args["limit"].as_u64().unwrap_or(25);
+                self.a()?
+                    .debug_types(query, usize::try_from(offset)?, usize::try_from(limit)?)
+            }
+            "lift_function" | "emulate_function" => {
+                let entry = address(args, "address")?;
+                let abi = args.get("abi").map(|_| text(args, "abi")).transpose()?;
+                let values = if name == "emulate_function" {
+                    let input = args["arguments"]
+                        .as_array()
+                        .context("arguments must be an array")?;
+                    anyhow::ensure!(
+                        input.len() <= 6,
+                        "at most six integer arguments are supported"
+                    );
+                    Some(
+                        input
+                            .iter()
+                            .map(|value| {
+                                if let Some(number) = value.as_u64() {
+                                    return Ok(number);
+                                }
+                                parse_address(
+                                    value
+                                        .as_str()
+                                        .context("use an unsigned integer or decimal/hex string")?,
+                                )
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    )
+                } else {
+                    None
+                };
+                self.a()?
+                    .lift_integer_function(entry, abi, values.as_deref())
+            }
+            "xrefs" => {
+                let address = address(args, "address")?;
+                let references = match args.get("direction") {
+                    None => self.a()?.xrefs(address),
+                    Some(value) if value == "incoming" => self.a()?.xrefs(address),
+                    Some(value) if value == "outgoing" => self.a()?.xrefs_from(address),
+                    _ => bail!("direction must be incoming or outgoing"),
+                };
+                Ok(serde_json::to_value(references)?)
+            }
             "read_bytes" => {
                 let bytes = self
                     .a()?
@@ -267,7 +319,10 @@ impl Workspace {
                     json!({"match":self.store.match_signature(&a.architecture,&bytes)?,"method":"architecture + exact byte SHA-256; not relocation invariant"}),
                 )
             }
-            "triage" => extras::triage(Path::new(&self.a()?.path)),
+            "triage" => {
+                let analysis = self.a()?;
+                extras::triage_bytes(Path::new(&analysis.path), analysis.snapshot())
+            }
             "save_report" => {
                 let path = Path::new(text(args, "path")?);
                 let report = json!({"schemaVersion":1,"analysis":self.a()?,"annotations":self.store.annotations(self.a()?.workspace_id())?});

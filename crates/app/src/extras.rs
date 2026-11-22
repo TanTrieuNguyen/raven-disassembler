@@ -18,7 +18,11 @@ pub fn triage(path: &Path) -> Result<Value> {
         "triage input limit is 512 MiB"
     );
     let bytes = fs::read(path)?;
-    let text = String::from_utf8_lossy(&bytes);
+    triage_bytes(path, &bytes)
+}
+
+pub fn triage_bytes(path: &Path, bytes: &[u8]) -> Result<Value> {
+    let text = String::from_utf8_lossy(bytes);
     let rules = [
         ("url", r#"https?://[^\s\x00-\x20<>"']{3,512}"#),
         ("ipv4_candidate", r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"),
@@ -56,7 +60,7 @@ pub fn triage(path: &Path) -> Result<Value> {
     ];
     let indicators: Vec<_> = markers.iter().filter(|m| text.contains(**m)).collect();
     let mut freq = [0u64; 256];
-    for &b in &bytes {
+    for &b in bytes {
         freq[b as usize] += 1;
     }
     let n = bytes.len() as f64;

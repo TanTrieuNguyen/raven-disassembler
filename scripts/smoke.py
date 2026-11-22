@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Actual CLI/MCP/plugin/mock-model smoke checks against a built application."""
-import argparse,hashlib,http.server,json,os,pathlib,subprocess,tempfile,threading
+import argparse,gzip,hashlib,http.server,json,os,pathlib,subprocess,tempfile,threading
 p=argparse.ArgumentParser();p.add_argument('--profile',default='release');args=p.parse_args()
 root=pathlib.Path(__file__).resolve().parent.parent
 bin_dir=root/'target'/args.profile
@@ -13,6 +13,9 @@ with tempfile.TemporaryDirectory(prefix='raven-smoke-') as tmp:
         return json.loads(r.stdout)
     analysis=cli('analyze',fixture)
     assert analysis['sha256']==hashlib.sha256(fixture.read_bytes()).hexdigest()
+    wrapped=tmp/'fixture.gz';wrapped.write_bytes(gzip.compress(fixture.read_bytes()))
+    unpacked=cli('call','open_gzip',json.dumps({'path':str(wrapped)}))
+    assert unpacked['sha256']==analysis['sha256'] and unpacked['entry']==analysis['entry']
     fun=next(f for f in analysis['functions'] if 'transform' in f['name'])
     address=hex(fun['address'])
     def call(tool,**kwargs):return cli('call','--file',fixture,tool,json.dumps(kwargs))
@@ -49,5 +52,5 @@ with tempfile.TemporaryDirectory(prefix='raven-smoke-') as tmp:
               {'jsonrpc':'2.0','id':4,'method':'tools/call','params':{'name':'disassemble','arguments':{'address':address,'size':32}}}]
     proc=subprocess.run([str(bin_dir/'raven-mcp'),'--database',str(database)],input='\n'.join(map(json.dumps,requests))+'\n',capture_output=True,text=True,check=True)
     responses=list(map(json.loads,proc.stdout.splitlines()));assert len(responses)==4
-    assert len(responses[1]['result']['tools'])==25 and responses[-1]['result']['isError'] is False
-    print(json.dumps({'status':'passed','format':analysis['format'],'architecture':analysis['architecture'],'sha256':analysis['sha256'],'functions':len(analysis['functions']),'mcp_tools':25,'checks':['actual CLI analysis/disassembly/CFG','annotations reopen','exact signatures','triage IOC','batch mixed success','JSON report','process plugin','local mock Assist HTTP','MCP stdio lifecycle + real disassembly']},indent=2))
+    assert len(responses[1]['result']['tools'])==30 and responses[-1]['result']['isError'] is False
+    print(json.dumps({'status':'passed','format':analysis['format'],'architecture':analysis['architecture'],'sha256':analysis['sha256'],'functions':len(analysis['functions']),'mcp_tools':30,'checks':['actual CLI analysis/disassembly/CFG','annotations reopen','exact signatures','triage IOC','batch mixed success','JSON report','process plugin','local mock Assist HTTP','MCP stdio lifecycle + real disassembly']},indent=2))

@@ -1,4 +1,8 @@
 //! Independent binary analysis. Addresses are virtual addresses, never file offsets.
+mod crash;
+pub use crash::inspect_core;
+mod lift;
+mod types;
 use anyhow::{anyhow, bail, Context, Result};
 use capstone::{arch, prelude::*};
 use object::{Object, ObjectSection, ObjectSymbol, SectionKind, SymbolKind};
@@ -61,6 +65,8 @@ pub struct Instruction {
     pub operands: String,
     pub target: Option<u64>,
     pub flow: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operand_references: Vec<Xref>,
 }
 impl Instruction {
     pub fn end(&self) -> u64 {
@@ -163,6 +169,29 @@ impl Analysis {
         Self::from_bytes(path.to_string_lossy().into_owned(), read_input(path)?)
     }
 
+    /// Decode a standard gzip wrapper around one supported object file.
+    pub fn open_gzip(path: impl AsRef<Path>) -> Result<Self> {
+        use std::io::Read;
+        let path = path.as_ref();
+        let compressed = read_input(path)?;
+        const MAX_INFLATED: u64 = 128 * 1024 * 1024;
+        let mut bytes = Vec::new();
+        flate2::read::MultiGzDecoder::new(compressed.as_slice())
+            .take(MAX_INFLATED + 1)
+            .read_to_end(&mut bytes)
+            .context("invalid gzip stream")?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MAX_INFLATED,
+            "gzip exceeds the 128 MiB decoded budget"
+        );
+        let mut result = Self::from_bytes(path.to_string_lossy().into_owned(), bytes)?;
+        result.limitations.push(format!(
+            "Input gzip SHA-256: {}. Analysis addresses and file offsets refer to the decoded binary snapshot.",
+            hex::encode(Sha256::digest(&compressed))
+        ));
+        Ok(result)
+    }
+
     pub fn open_raw(
         path: impl AsRef<Path>,
         mode: &str,
@@ -223,7 +252,7 @@ impl Analysis {
             sections, functions: vec![], symbols: vec![], imports: vec![], exports: vec![],
             strings, bytes, references: vec![], little_endian,
             limitations: vec!["The entire raw image is treated as potential code. Base, architecture, and endianness are caller-selected and there are no format-derived function boundaries.".into(),
-                "Direct references and CFG are inferred from a bounded linear sweep. Indirect references and data layout are unknown.".into()],
+                "References and CFG come from a bounded linear sweep. Fixed-layout x86/x64 pointer-slot destinations are labeled as indirect candidates.".into()],
         };
         Ok(analysis.finish(BTreeMap::from([(base, seed)])))
     }
@@ -359,7 +388,7 @@ impl Analysis {
         let mut result = Self { path, sha256: hex::encode(Sha256::digest(&bytes)), format, architecture, entry, raw_mapping: None,
             sections, functions: vec![], symbols, strings, imports, exports,
             limitations: vec!["Function seeds use symbols, entry point and direct calls; stripped/indirect functions may be missing.".into(),
-                "References cover direct code branches/calls only; data and indirect references are unknown.".into(),
+                "References include direct control flow and statically addressed x86/x64 memory operands. Register-based, relocated and jump-table destinations are unresolved.".into(),
                 "Automatic executable-section linear sweep can misidentify embedded data as code; call-derived seeds are inferred.".into(),
                 "ASCII strings only (minimum four bytes, maximum 200000 results).".into(),
                 "CFG models recognized branch/call/return instructions; exception edges and unresolved indirect destinations are unknown.".into()], bytes, references: vec![], little_endian };
@@ -402,6 +431,7 @@ impl Analysis {
                         result.limitations.push(format!("Section {} contains undecodable bytes marked as data; CFG does not infer flow across them.",s.name));
                     }
                     for i in insns {
+                        result.references.extend(i.operand_references);
                         if let Some(target) = i.target {
                             result.references.push(Xref {
                                 from: i.address,
@@ -446,7 +476,10 @@ impl Analysis {
             .fold(0u64, u64::saturating_add)
             > MAX_SCAN_BYTES as u64
         {
-            result.limitations.push("Automatic direct-reference scan limited to first 2 MiB of executable section bytes.".into());
+            result.limitations.push(
+                "Automatic reference scan limited to first 2 MiB of executable section bytes."
+                    .into(),
+            );
         }
         if result.architecture == "unsupported" {
             result
@@ -534,6 +567,9 @@ impl Analysis {
             a => bail!("disassembly not implemented for architecture {a}"),
         };
         engine.set_skipdata(true)?;
+        if self.architecture.starts_with("x86") {
+            engine.set_detail(true)?;
+        }
         Ok(engine)
     }
     pub fn summary(&self) -> serde_json::Value {
@@ -630,6 +666,11 @@ impl Analysis {
                 } else {
                     None
                 };
+                let operand_references = if i.id().0 != 0 && self.architecture.starts_with("x86") {
+                    self.x86_operand_references(&cs, i, flow)
+                } else {
+                    Vec::new()
+                };
                 Instruction {
                     address: i.address(),
                     bytes: hex::encode(i.bytes()),
@@ -637,6 +678,7 @@ impl Analysis {
                     operands,
                     target,
                     flow: flow.into(),
+                    operand_references,
                 }
             }));
             if consumed == 0 {
@@ -646,6 +688,102 @@ impl Analysis {
         }
         Ok(output)
     }
+    fn x86_operand_references(
+        &self,
+        cs: &Capstone,
+        insn: &capstone::Insn<'_>,
+        flow: &str,
+    ) -> Vec<Xref> {
+        use arch::x86::{X86OperandType, X86Reg};
+        let Ok(detail) = cs.insn_detail(insn) else {
+            return Vec::new();
+        };
+        let arch = detail.arch_detail();
+        let Some(x86) = arch.x86() else {
+            return Vec::new();
+        };
+        let mut result = Vec::new();
+        for operand in x86.operands() {
+            let X86OperandType::Mem(memory) = operand.op_type else {
+                continue;
+            };
+            if memory.index().0 != 0 || memory.segment().0 != 0 {
+                continue;
+            }
+            let address = match u32::from(memory.base().0) {
+                X86Reg::X86_REG_RIP => insn
+                    .address()
+                    .wrapping_add(insn.bytes().len() as u64)
+                    .wrapping_add_signed(memory.disp()),
+                X86Reg::X86_REG_EIP => u64::from(
+                    (insn.address() as u32)
+                        .wrapping_add(insn.bytes().len() as u32)
+                        .wrapping_add(memory.disp() as u32),
+                ),
+                X86Reg::X86_REG_INVALID if self.architecture == "x86" => {
+                    u64::from(memory.disp() as u32)
+                }
+                X86Reg::X86_REG_INVALID => memory.disp() as u64,
+                _ => continue,
+            };
+            if !self
+                .sections
+                .iter()
+                .any(|section| contains(section.address, section.size, address))
+            {
+                continue;
+            }
+            let kind = if insn.mnemonic() == Some("lea") {
+                "data-address"
+            } else {
+                match operand.access {
+                    Some(capstone::RegAccessType::ReadOnly) => "data-read",
+                    Some(capstone::RegAccessType::WriteOnly) => "data-write",
+                    Some(capstone::RegAccessType::ReadWrite) => "data-read-write",
+                    None => "data-access",
+                }
+            };
+            result.push(Xref {
+                from: insn.address(),
+                to: address,
+                kind: kind.into(),
+            });
+
+            // For explicitly loaded raw images, on-disk pointers have no implicit loader relocations.
+            // Keep the inferred target separate from the instruction's verified direct target.
+            if self.raw_mapping.is_some() && matches!(flow, "call" | "jump") {
+                let target = self
+                    .mapped_bytes(address, usize::from(operand.size))
+                    .ok()
+                    .and_then(|bytes| match (operand.size, bytes.len()) {
+                        (8, 8) => Some(u64::from_le_bytes(bytes.try_into().ok()?)),
+                        (4, 4) => Some(u64::from(u32::from_le_bytes(bytes.try_into().ok()?))),
+                        _ => None,
+                    });
+                if let Some(target) = target.filter(|target| {
+                    self.sections.iter().any(|section| {
+                        section.executable && contains(section.address, section.file_size, *target)
+                    })
+                }) {
+                    result.push(Xref {
+                        from: insn.address(),
+                        to: target,
+                        kind: format!("indirect-{flow}-candidate"),
+                    });
+                }
+            }
+        }
+        result
+    }
+
+    pub fn xrefs_from(&self, address: u64) -> Vec<Xref> {
+        self.references
+            .iter()
+            .filter(|reference| reference.from == address)
+            .cloned()
+            .collect()
+    }
+
     pub fn disassemble(&self, address: u64, size: usize) -> Result<Vec<Instruction>> {
         self.decode(address, size, true)
     }

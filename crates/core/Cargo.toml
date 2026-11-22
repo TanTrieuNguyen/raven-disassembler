@@ -12,3 +12,5 @@ object = { version = "0.36", features = ["read", "write"] }
 capstone = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+gimli = { version = "0.32.3", default-features = false, features = ["read", "std"] }
+flate2 = "1"

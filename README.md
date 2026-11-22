@@ -48,7 +48,7 @@ Ví dụ cấu hình client MCP (thay đường dẫn nếu di chuyển dự án
 
 Chọn cùng `RAVEN_DB` cho GUI/CLI để chia sẻ annotation. GUI/CLI trên macOS mặc định dùng `~/Library/Application Support/RAVEN Disassembler/workspace.sqlite`; MCP nên dùng đường dẫn tuyệt đối. Server chỉ dùng stdin/stdout cho JSON-RPC, log/lỗi ở stderr. Client gọi `initialize`, rồi `tools/list`, `tools/call`. Đây là MCP riêng của RAVEN, không điều khiển IDA đã cài.
 
-25 tools: `open_binary`, `open_raw`, `close_binary`, `binary_info`, `list_functions`, `list_strings`, `list_sections`, `list_imports`, `list_exports`, `disassemble`, `analyze_function`, `decompile_function`, `xrefs`, `read_bytes`, `annotate`, `annotations`, `audit_log`, `export_annotations`, `import_annotations`, `signature_save`, `signature_match`, `triage`, `save_report`, `assist`, `run_plugin`.
+30 tools: `open_binary`, `open_gzip`, `open_raw`, `close_binary`, `binary_info`, `list_functions`, `list_strings`, `list_sections`, `list_imports`, `list_exports`, `disassemble`, `analyze_function`, `decompile_function`, `lift_function`, `emulate_function`, `debug_types`, `inspect_core`, `xrefs`, `read_bytes`, `annotate`, `annotations`, `audit_log`, `export_annotations`, `import_annotations`, `signature_save`, `signature_match`, `triage`, `save_report`, `assist`, `run_plugin`.
 
 Mọi tool cũng dùng được từ CLI:
 
@@ -66,7 +66,15 @@ raven decompile file.bin 0x401000
 
 Raw loader nhận `x86`, `x86_64`, `arm`, `thumb` hoặc `aarch64`. Dùng `--endian big` cho ảnh ARM phù hợp. Trong GUI, dùng **Tools → open_raw** với các đối số `path`, `mode`, `base`, và `endian` tùy chọn. Metadata của cùng một file raw được tách theo cách ánh xạ.
 
-Pseudocode dùng Ghidra Headless cài riêng. Đặt `RAVEN_GHIDRA_HOME` bằng đường dẫn tuyệt đối tới thư mục Ghidra và dùng JDK mà bản Ghidra yêu cầu. Chọn hàm trong GUI, mở **Pseudocode** và bấm **Decompile selected function**. CLI và MCP dùng cùng adapter. Decompiler phân tích bản sao của binary đang mở và xác định hàm bằng file offset. Chức năng này hỗ trợ binary định dạng ELF, PE hoặc Mach-O mà Ghidra import được.
+Pseudocode dùng Ghidra Headless cài riêng. Đặt `RAVEN_GHIDRA_HOME` bằng đường dẫn tuyệt đối tới thư mục Ghidra và dùng JDK mà bản Ghidra yêu cầu. Chọn hàm trong GUI, mở **Pseudocode** và bấm **Open Ghidra pseudocode**. CLI và MCP dùng cùng adapter. Decompiler phân tích bản sao của binary đang mở và xác định hàm bằng file offset. Chức năng này hỗ trợ binary định dạng ELF, PE hoặc Mach-O mà Ghidra import được.
+
+## Lifter, tham chiếu và debug offline
+
+- **Decompile with RAVEN** mở pseudocode C trực tiếp cho các hàm số nguyên x86-64 tuyến tính thuộc tập lệnh được hỗ trợ. `raven decompile file.bin 0x401000 --native` dùng lõi này. Tool `lift_function` trả prototype và độ rộng suy ra. `emulate_function` dùng cùng mô hình với đầu vào chỉ định. Chưa hỗ trợ nhánh, bộ nhớ, thanh ghi SIMD và các lời gọi khác trong mô hình này.
+- `xrefs` nhận `direction: "incoming"` hoặc `"outgoing"`. RAVEN đọc toán hạng bộ nhớ tĩnh trên x86/x64. Đích đọc từ ô con trỏ trong raw image được đánh dấu ứng viên. GOT/IAT đã relocate, jump table và đích dựa vào register hiện vẫn cần phân tích bổ sung.
+- `debug_types` đọc khai báo struct, enum, array và kiểu dữ liệu từ DWARF nhúng trong file. Chọn tool này trong GUI hoặc MCP, hoặc chạy `raven call --file program debug_types '{"query":"MyStruct"}'`.
+- `open_gzip` giải nén lớp gzip chuẩn bao quanh một binary, tối đa 128 MiB sau giải nén. Đây là hỗ trợ container, chưa có trình tháo packer executable.
+- `inspect_core` đọc PC, SP, thread ID và signal đã ghi trong Linux ELF64 core x86-64/ARM64. Ví dụ `raven call inspect_core '{"path":"/absolute/path/core"}'`. Đây là chẩn đoán sau khi tiến trình dừng. Live debugging, stepping và stack unwinding vẫn đang thiếu.
 
 ## Metadata, chữ ký hàm và trao đổi
 

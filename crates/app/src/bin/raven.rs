@@ -36,10 +36,14 @@ enum Cmd {
         #[arg(long, default_value_t = 128)]
         size: usize,
     },
-    /// Decompile a function through the configured local Ghidra installation.
+    /// Decompile a function with Ghidra or the native x86-64 lifter.
     Decompile {
         file: PathBuf,
         address: String,
+        #[arg(long)]
+        native: bool,
+        #[arg(long, requires = "native")]
+        abi: Option<String>,
     },
     /// Analyze many files independently; failed files remain in the result.
     Batch {
@@ -145,12 +149,23 @@ fn main() -> Result<()> {
             };
             (result, None)
         }
-        Cmd::Decompile { file, address } => {
+        Cmd::Decompile {
+            file,
+            address,
+            native,
+            abi,
+        } => {
             open(&mut w, &file)?;
-            (
-                w.call("decompile_function", &json!({"address":address}))?,
-                None,
-            )
+            let mut parameters = json!({"address":address});
+            if let Some(abi) = abi {
+                parameters["abi"] = json!(abi);
+            }
+            let tool = if native {
+                "lift_function"
+            } else {
+                "decompile_function"
+            };
+            (w.call(tool, &parameters)?, None)
         }
         Cmd::Batch { files, output } => {
             anyhow::ensure!(!files.is_empty(), "provide at least one file");

@@ -13,6 +13,7 @@ pub fn tools() -> Vec<Value> {
     let paging = json!({"query":str_,"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":1000}});
     let mut result=vec![
         tool("open_binary","Load a thin ELF, PE or Mach-O file for static analysis. Does not execute it.",json!({"path":str_}),&["path"]),
+        tool("open_gzip","Unwrap a standard gzip file to a bounded in-memory ELF, PE/COFF, or Mach-O snapshot. No execution.",json!({"path":str_}),&["path"]),
         tool("open_raw","Map raw bytes at a caller-selected base. Modes: x86, x86_64, arm, thumb, aarch64.",json!({"path":str_,"mode":{"enum":["x86","x86_64","arm","thumb","aarch64"]},"base":addr,"endian":{"enum":["little","big"]}}),&["path","mode","base"]),
         tool("close_binary","Release the active binary; SQLite metadata remains.",json!({}),&[]),
         tool("binary_info","Return metadata, analysis inventory and explicit coverage limitations.",json!({}),&[]),
@@ -24,7 +25,11 @@ pub fn tools() -> Vec<Value> {
         tool("disassemble","Decode real instructions at a virtual address using Capstone.",json!({"address":addr,"size":size}),&["address"]),
         tool("analyze_function","Return inferred function bounds, instructions, basic blocks and direct xrefs. Not decompilation.",json!({"address":addr}),&["address"]),
         tool("decompile_function","Generate C pseudocode for a static function using a configured local Ghidra installation.",json!({"address":addr}),&["address"]),
-        tool("xrefs","Return direct control-flow references to an address. Indirect/data references are not recovered.",json!({"address":addr}),&["address"]),
+        tool("inspect_core","Read recorded thread PC, SP, and signal from a Linux ELF64 x86-64 or ARM64 core file.",json!({"path":str_}),&["path"]),
+        tool("debug_types","Read embedded DWARF structure, enum, array and type declarations with section-relative type IDs.",json!({"query":str_,"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100}}),&[]),
+        tool("lift_function","Generate C and an inferred integer prototype for a supported straight-line x86-64 function with the native RAVEN lifter.",json!({"address":addr,"abi":{"enum":["sysv","win64"]}}),&["address"]),
+        tool("emulate_function","Evaluate the native lifter's register-only integer model with explicit unsigned inputs. The binary is never executed.",json!({"address":addr,"abi":{"enum":["sysv","win64"]},"arguments":{"type":"array","maxItems":6,"items":{"type":["integer","string"]}}}),&["address","arguments"]),
+        tool("xrefs","Query direct control-flow and static x86/x64 data references. Fixed raw pointer destinations are labeled indirect candidates.",json!({"address":addr,"direction":{"enum":["incoming","outgoing"]}}),&["address"]),
         tool("read_bytes","Read file-backed bytes at a virtual address.",json!({"address":addr,"size":size}),&["address"]),
         tool("annotate","Persist rename/comment and audit event; expected_revision enables conflict detection (0=create).",json!({"address":addr,"name":str_,"comment":str_,"author":str_,"expected_revision":{"type":"integer","minimum":0}}),&["address"]),
         tool("annotations","Read annotations for the active binary hash.",json!({}),&[]),

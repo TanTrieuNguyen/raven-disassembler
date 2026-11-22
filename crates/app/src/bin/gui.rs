@@ -79,7 +79,14 @@ impl App {
         self.loading = Some(rx);
         self.status = "Analyzing binary…".into();
         std::thread::spawn(move || {
-            let _ = tx.send(Analysis::open(path));
+            let gzip = std::path::Path::new(&path)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"));
+            let _ = tx.send(if gzip {
+                Analysis::open_gzip(path)
+            } else {
+                Analysis::open(path)
+            });
         });
     }
     fn set_function(&mut self, address: u64) -> bool {
@@ -279,24 +286,16 @@ impl App {
         }
         ui.separator();
         let refs = analysis.xrefs(address);
-        let outgoing = self
-            .detail
-            .as_ref()
-            .and_then(|detail| {
-                detail
-                    .instructions
-                    .iter()
-                    .find(|instruction| instruction.address == address)
-            })
-            .and_then(|instruction| instruction.target);
+        let outgoing = analysis.xrefs_from(address);
         let mut jump = None;
-        ui.strong("Outgoing target");
-        if let Some(target) = outgoing {
-            if ui.link(format!("{target:#x}")).clicked() {
-                jump = Some(target);
+        ui.strong(format!("Outgoing references · {}", outgoing.len()));
+        for reference in outgoing {
+            if ui
+                .link(format!("{:#x}  {}", reference.to, reference.kind))
+                .clicked()
+            {
+                jump = Some(reference.to);
             }
-        } else {
-            ui.label("No direct target at this address.");
         }
         ui.separator();
         ui.strong(format!("Incoming references · {}", refs.len()));
@@ -335,7 +334,19 @@ impl App {
     fn render_pseudocode(&mut self, ui: &mut egui::Ui) {
         let available = self.detail.is_some() && self.decompiling.is_none();
         if ui
-            .add_enabled(available, egui::Button::new("Decompile selected function"))
+            .add_enabled(available, egui::Button::new("Decompile with RAVEN"))
+            .clicked()
+        {
+            if let (Some(analysis), Some(detail)) = (&self.ws.analysis, &self.detail) {
+                self.pseudocode =
+                    match analysis.lift_integer_function(detail.function.address, None, None) {
+                        Ok(result) => result["pseudocode"].as_str().unwrap_or_default().to_owned(),
+                        Err(error) => format!("{error:#}"),
+                    };
+            }
+        }
+        if ui
+            .add_enabled(available, egui::Button::new("Open Ghidra pseudocode"))
             .clicked()
         {
             self.start_decompile();
@@ -344,7 +355,7 @@ impl App {
             ui.spinner();
         }
         if self.pseudocode.is_empty() {
-            ui.label("Configure RAVEN_GHIDRA_HOME to enable the Ghidra provider.");
+            ui.label("RAVEN supports straight-line x86-64 integer code. Set RAVEN_GHIDRA_HOME for the optional broader provider.");
         }
         egui::ScrollArea::both().show(ui, |ui| {
             ui.add(egui::Label::new(RichText::new(&self.pseudocode).monospace()).selectable(true));
@@ -355,7 +366,10 @@ impl App {
             Ok(v) => {
                 self.output = serde_json::to_string_pretty(&v).unwrap_or_default();
                 self.status = format!("{tool}: complete");
-                if matches!(tool, "open_raw" | "open_binary" | "close_binary") {
+                if matches!(
+                    tool,
+                    "open_raw" | "open_binary" | "open_gzip" | "close_binary"
+                ) {
                     self.reset_navigation();
                     self.pseudocode.clear();
                     self.decompiling = None;
@@ -646,7 +660,7 @@ if ui.button("Audit history").clicked(){self.invoke("audit_log",json!({}));}});
                     egui::ScrollArea::both().show(ui,|ui|{ui.monospace(&self.output);});
                 },
                 9 => self.render_pseudocode(ui),
-                _=>{ui.heading("Engine coverage");ui.label("Implemented: static inventory, x86/x64/ARM/AArch64 disassembly, direct control-flow xrefs, CFG, ASCII strings, annotations, exact function signatures, MCP stdio and process plugin SDK.");ui.add_space(12.);ui.label("Optional pseudocode provider: Ghidra. Remaining: debugger, full type recovery, data/indirect xrefs, unpacking/emulation, remote team synchronization, IDB compatibility and Hex-Rays plugin compatibility.");if let Some(a)=&self.ws.analysis{ui.separator();ui.monospace(&a.sha256);for l in &a.limitations{ui.label(format!("• {l}"));}}},
+                _=>{ui.heading("Engine coverage");ui.label("Implemented: static inventory, x86/x64/ARM/AArch64 disassembly, control flow and static x86/x64 data xrefs, CFG, strings, annotations, function signatures, DWARF types, Linux core inspection and MCP stdio.");ui.add_space(12.);ui.label("Pseudocode: native straight-line x86-64 lifter or optional Ghidra. Remaining: live debugging, broader type inference and indirect references, executable unpacking, remote teams and IDB/plugin compatibility.");if let Some(a)=&self.ws.analysis{ui.separator();ui.monospace(&a.sha256);for l in &a.limitations{ui.label(format!("• {l}"));}}},
             }
         });
     }
