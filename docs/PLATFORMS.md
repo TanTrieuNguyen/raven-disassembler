@@ -1,16 +1,21 @@
-# Desktop packages
+# Desktop installation
 
-Each archive includes the RAVEN Disassembler GUI, `raven` CLI and `raven-mcp`.
+Download the asset that matches the architecture of the operating system on which RAVEN will run. The installer includes the GUI, `raven` CLI and `raven-mcp`. The analyzed file may use a different CPU architecture.
 
-| Package target | Host |
-| --- | --- |
-| `x86_64-pc-windows-msvc` | Windows 10 or later on x64 |
-| `aarch64-pc-windows-msvc` | Windows on ARM64. The build runner is Windows 11 ARM64 |
-| `x86_64-unknown-linux-gnu` | Linux x64. Built on Ubuntu 22.04 |
-| `aarch64-unknown-linux-gnu` | Linux ARM64. Built on Ubuntu 22.04 |
+| Host | CPU | Installation |
+| --- | --- | --- |
+| Windows 10 or later | x86, x64 | Run the matching Setup executable. A portable ZIP is also available. |
+| Windows 11 | ARM64 | Run the ARM64 Setup executable or extract the portable ZIP. |
+| macOS 11 or later | Intel x64, Apple Silicon ARM64 | Open the DMG and copy RAVEN Disassembler to Applications. |
+| Ubuntu 22.04 or compatible Debian-based systems | x86, x64, ARM64 | Run `sudo apt install ./<downloaded-file>.deb`. |
+| Other compatible Linux systems | x86, x64, ARM64 | Extract the tar.gz and run `raven-gui`. |
 
-Extract the archive and run `raven-gui.exe` on Windows or `./raven-gui` on Linux. Pass a file path as the first argument or open it in the GUI. The Linux GUI needs an X11 or Wayland desktop and working system OpenGL libraries. The Linux packages use Ubuntu 22.04 as their build baseline. Older distributions may have incompatible system libraries.
+The macOS application is ad-hoc signed and not notarized. On a trusted downloaded copy, use the standard macOS Privacy & Security approval if Gatekeeper blocks it. Windows installers are unsigned. Compare the downloaded file with the release SHA-256 checksums before installing.
 
-Each host build analyzes x86 (32-bit), x86-64, ARM, Thumb and ARM64 binary code. The host CPU does not have to match the input binary's CPU. The Windows x64 package targets the Windows 10 API baseline, while GitHub's hosted Windows runners exercise newer operating systems. Windows 10 desktop launch coverage requires a separate Windows 10 machine.
+Linux builds use Ubuntu 22.04 as their build baseline. The GUI requires X11 or Wayland and system OpenGL libraries. Linux x86 binaries are built and smoke-tested on a 64-bit Ubuntu runner with the 32-bit runtime. Windows x86 binaries are smoke-tested under the Windows 32-bit compatibility layer. Hosted build and smoke tests do not replace an interactive desktop session on each operating system release.
 
-Packages and SHA-256 checksums are attached to the **Build desktop packages** workflow run. Download the artifact whose target matches your host.
+Build from source with stable Rust, a C/C++ compiler and the following platform dependencies:
+
+- Windows: the MSVC toolchain and Windows SDK for the selected CPU.
+- macOS: Xcode Command Line Tools.
+- Linux: Mesa OpenGL, xkbcommon, Wayland, X11, XInput, Xcursor, Xrandr, Xinerama and D-Bus development packages.

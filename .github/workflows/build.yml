@@ -14,13 +14,21 @@ jobs:
       matrix:
         include:
           - runner: windows-2022
+            target: i686-pc-windows-msvc
+          - runner: windows-2022
             target: x86_64-pc-windows-msvc
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
           - runner: ubuntu-22.04
+            target: i686-unknown-linux-gnu
+          - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     env:
@@ -40,6 +48,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libdbus-1-dev
+      - name: Install 32-bit Linux toolchain
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: sudo apt-get install -y gcc-multilib g++-multilib libc6-dev-i386
+      - name: Set macOS deployment baseline
+        if: runner.os == 'macOS'
+        run: echo MACOSX_DEPLOYMENT_TARGET=11.0 >> "$GITHUB_ENV"
       - name: Run analysis, database, and MCP tests
         run: cargo test --locked --release --workspace --features gui --target "${{ matrix.target }}"
       - name: Build release binaries
@@ -52,4 +66,24 @@ jobs:
           name: RAVEN-Disassembler-${{ matrix.target }}
           path: |
             artifacts/RAVEN-Disassembler-${{ matrix.target }}.*
+          if-no-files-found: error
+
+
+  windows-setup:
+    needs: desktop
+    if: ${{ !cancelled() }}
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'RAVEN-Disassembler-*-pc-windows-msvc'
+          path: portable
+      - name: Build and smoke test Setup executables
+        run: python scripts/package-windows.py portable artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RAVEN-Disassembler-Windows-Setup
+          path: artifacts/*
           if-no-files-found: error

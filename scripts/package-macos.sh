@@ -5,9 +5,10 @@ mkdir -p artifacts/RAVEN-Disassembler/RAVEN\ Disassembler.app/Contents/MacOS
 mkdir -p 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Resources'
 sips -s format icns -z 512 512 crates/app/assets/raven-logo.jpg \
     --out 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Resources/Raven.icns'
+RAVEN_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)"
 cp target/release/raven-gui 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/MacOS/raven-gui'
 cp target/release/raven target/release/raven-mcp artifacts/RAVEN-Disassembler/
-cat > 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Info.plist' <<'PLIST'
+cat > 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Info.plist' <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -16,7 +17,7 @@ cat > 'artifacts/RAVEN-Disassembler/RAVEN Disassembler.app/Contents/Info.plist' 
 <key>CFBundleIconFile</key><string>Raven.icns</string>
 <key>CFBundleExecutable</key><string>raven-gui</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>CFBundleShortVersionString</key><string>$RAVEN_VERSION</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSMinimumSystemVersion</key><string>10.15</string>

@@ -2908,7 +2908,7 @@ dependencies = [
 
 [[package]]
 name = "raven"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "raven-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "capstone",
@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "raven-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "hex",

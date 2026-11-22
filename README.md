@@ -1,131 +1,89 @@
 # RAVEN Disassembler
 
-<img src="crates/app/assets/raven-logo.jpg" alt="RAVEN Disassembler" width="220">
+<img src="crates/app/assets/raven-logo.jpg" alt="RAVEN Disassembler logo" width="220">
 
-Bàn phân tích binary viết bằng Rust: GUI native, CLI headless, MCP stdio và thư viện dùng chung. Dự án độc lập theo yêu cầu tham chiếu Hex-Rays; **bản 0.1 chưa tương đương đầy đủ IDA Pro hay các add-on**. Xem [bảng tính năng](docs/FEATURE-MATRIX.md) để biết chính xác phần đang chạy và phần còn thiếu.
+RAVEN is a Rust workbench for static binary analysis. Its desktop GUI, headless CLI, and 30-tool MCP server share one analysis engine. Open ELF, PE/COFF, thin Mach-O, raw images with an explicit mapping, or supported binaries wrapped in gzip.
 
-## Tải app cho Windows và Linux
+## Downloads
 
-Tải ZIP Windows hoặc tar.gz Linux trong tab **Actions → Build desktop packages** trên GitHub. Chọn x64 hoặc ARM64 theo CPU của máy chạy. Cả bốn bản phân tích x86-32, x86-64, ARM, Thumb và ARM64. Xem [hướng dẫn nền tảng](docs/PLATFORMS.md).
+[Download RAVEN and read the installation guide](https://tantrieunguyen.github.io/raven-disassembler-site/).
 
-## Build và chạy
+| Host | CPU architectures | Installer |
+|---|---|---|
+| Windows | x86, x64, ARM64 | Setup executable |
+| macOS 11 or later | Intel x64, Apple Silicon ARM64 | DMG |
+| Debian/Ubuntu Linux | x86, x64, ARM64 | DEB |
+| Other compatible Linux distributions | x86, x64, ARM64 | Portable tar.gz |
 
-Yêu cầu: Rust stable (đã kiểm chứng với 1.100.0), C/C++ toolchain; macOS cần Xcode Command Line Tools. Dependencies C gồm Capstone và SQLite được build từ crate. Build Windows và Linux chạy trên GitHub Actions.
+Choose the installer for the CPU running RAVEN. Every build can analyze x86, x86-64, ARM, Thumb, and ARM64 machine code. See [platforms and compatibility](docs/PLATFORMS.md) for requirements and packaging details.
+
+## Workbench
+
+- Browse procedures, assembly, strings, imports, exports, and sections.
+- Navigate a control-flow graph and a synchronized hex view. Follow references with clickable destinations and Back/Forward history.
+- Decode direct control flow and statically addressed x86/x64 data operands. Fixed raw pointer slots can produce labeled indirect candidates.
+- Generate C pseudocode for supported straight-line x86-64 integer routines using the native lifter. The same model exposes an inferred prototype and supports bounded register-only emulation. An optional Ghidra adapter provides broader pseudocode.
+- Read embedded DWARF types and recorded thread PC, SP, and signal from supported Linux ELF64 core dumps.
+- Store annotations and exact function signatures in SQLite. Export revisioned annotations and share one project through a restricted MCP session over SSH.
+
+See the [feature matrix](docs/FEATURE-MATRIX.md) for coverage, including the limits on indirect references, decompilation, live debugging, executable packers, and IDA database/plugin interoperability.
+
+## Build and run
+
+Install stable Rust, a native C/C++ toolchain, and the requirements in the [platform guide](docs/PLATFORMS.md). Capstone and SQLite are built through Cargo dependencies.
 
 ```sh
-cd /absolute/path/to/raven-disassembler
-# Toolchain riêng đã cài trong phiên này; không sửa shell profile.
-# Nếu giải nén source sang máy khác, dùng Rust đã cài và bỏ dòng source dưới:
-. scripts/env.sh
-cargo test --workspace
-cargo build --release --features gui --bins
-./target/release/raven-gui /absolute/path/to/binary
-./target/release/raven analyze /absolute/path/to/binary -o analysis.json
-./target/release/raven batch file1 file2 -o batch.json
-./target/release/raven disasm /absolute/path/to/binary 0x100001000 --size 128
-./target/release/raven function /absolute/path/to/binary 0x100001000
-./target/release/raven strings /absolute/path/to/binary https
-./target/release/raven triage /absolute/path/to/binary
+cargo test --locked --workspace --features gui
+cargo build --locked --release --features gui --bins
+./target/release/raven-gui program.bin
+./target/release/raven analyze program.bin -o analysis.json
+./target/release/raven disasm program.bin 0x401000 --size 128
+./target/release/raven raw firmware.bin --mode thumb --base 0x08000000
+./target/release/raven decompile program.bin 0x401000 --native
 ```
 
-Địa chỉ là **virtual address**; `--size` tính bằng byte. Tìm địa chỉ thực từ `analyze` hoặc GUI, không dùng địa chỉ minh họa trên một binary khác. Binary không được thực thi khi phân tích.
+Addresses are virtual addresses. Replace the example addresses with addresses from your binary. The disassembly size is in bytes. In the GUI, open or drop a binary and select a function. Space toggles between linear disassembly and the graph when a text field is not focused. Pseudocode can appear in its own tab or beside the listing in the inspector.
 
-GUI: nhập đường dẫn và bấm **Open binary** hoặc kéo file vào cửa sổ. Chọn hàm ở navigator. Disassembly, Control flow, Hex bytes và Inspector dùng chung địa chỉ. Bấm địa chỉ nhảy trong disassembly hoặc tham chiếu trong Inspector để điều hướng. Chọn Pseudocode trong Inspector để xem cạnh disassembly hoặc đồ thị. Dùng **Back** và **Forward** để quay lại. Phím **Space** chuyển giữa disassembly và đồ thị khi ô nhập liệu không có focus. **Save report** ghi `<binary-path>.raven.json`.
+For optional Ghidra pseudocode, set `RAVEN_GHIDRA_HOME` to the absolute path of a Ghidra installation and install the JDK required by that version. Select **Open Ghidra pseudocode** in the GUI or omit `--native` in the CLI.
 
-## MCP
+## MCP and scripting
 
-Ví dụ cấu hình client MCP (thay đường dẫn nếu di chuyển dự án):
+Point a stdio MCP client to the installed server executable. Use `raven-mcp.exe` on Windows.
 
 ```json
 {
   "mcpServers": {
     "raven": {
-      "command": "/absolute/path/to/raven-disassembler/target/release/raven-mcp"
+      "command": "/absolute/path/to/raven-mcp"
     }
   }
 }
 ```
 
-Chọn cùng `RAVEN_DB` cho GUI/CLI để chia sẻ annotation. GUI/CLI trên macOS mặc định dùng `~/Library/Application Support/RAVEN Disassembler/workspace.sqlite`; MCP nên dùng đường dẫn tuyệt đối. Server chỉ dùng stdin/stdout cho JSON-RPC, log/lỗi ở stderr. Client gọi `initialize`, rồi `tools/list`, `tools/call`. Đây là MCP riêng của RAVEN, không điều khiển IDA đã cài.
-
-30 tools: `open_binary`, `open_gzip`, `open_raw`, `close_binary`, `binary_info`, `list_functions`, `list_strings`, `list_sections`, `list_imports`, `list_exports`, `disassemble`, `analyze_function`, `decompile_function`, `lift_function`, `emulate_function`, `debug_types`, `inspect_core`, `xrefs`, `read_bytes`, `annotate`, `annotations`, `audit_log`, `export_annotations`, `import_annotations`, `signature_save`, `signature_match`, `triage`, `save_report`, `assist`, `run_plugin`.
-
-Mọi tool cũng dùng được từ CLI:
+Use the same `RAVEN_DB` or `--database` path to share annotations between clients. Discover the tool schema using `tools/list` or `raven tools`. Each tool is also available through the CLI.
 
 ```sh
-./target/release/raven call --file fixtures/sample list_functions '{"limit":20}'
-./target/release/raven call --file fixtures/sample read_bytes '{"address":"0x100000000","size":16}'
+raven call --file program.bin list_functions '{"limit":20}'
+raven call --file program.bin xrefs '{"address":"0x401000","direction":"incoming"}'
+raven call --file program.bin debug_types '{"query":"Header"}'
+raven call inspect_core '{"path":"/absolute/path/to/core"}'
+raven call open_gzip '{"path":"/absolute/path/to/program.gz"}'
 ```
 
-## Raw binary và pseudocode
+Shared annotation sessions are restricted to one workspace SHA-256 and a server-configured author. Configure an authenticated SSH forced command for each user before exposing a project.
 
 ```sh
-raven raw firmware.bin --mode thumb --base 0x08000000 --disassemble 0x08000000 --size 64
-raven decompile file.bin 0x401000
+raven-mcp --database /srv/raven/team.sqlite --shared-project WORKSPACE_SHA256 --shared-author Alice
 ```
 
-Raw loader nhận `x86`, `x86_64`, `arm`, `thumb` hoặc `aarch64`. Dùng `--endian big` cho ảnh ARM phù hợp. Trong GUI, dùng **Tools → open_raw** với các đối số `path`, `mode`, `base`, và `endian` tùy chọn. Metadata của cùng một file raw được tách theo cách ánh xạ.
+The shared mode offers project information, annotations, revision-checked writes, audit history, and export. For raw images, use the reported `raw_mapping.workspace_id`. A revision of zero creates a new annotation. A stale revision fails without changing the stored annotation.
 
-Pseudocode dùng Ghidra Headless cài riêng. Đặt `RAVEN_GHIDRA_HOME` bằng đường dẫn tuyệt đối tới thư mục Ghidra và dùng JDK mà bản Ghidra yêu cầu. Chọn hàm trong GUI, mở **Pseudocode** và bấm **Open Ghidra pseudocode**. CLI và MCP dùng cùng adapter. Decompiler phân tích bản sao của binary đang mở và xác định hàm bằng file offset. Chức năng này hỗ trợ binary định dạng ELF, PE hoặc Mach-O mà Ghidra import được.
+Assist is optional. Set `RAVEN_ASSIST_URL`, `RAVEN_ASSIST_MODEL`, and, if required, `RAVEN_ASSIST_KEY` before calling it. The process plugin SDK takes a manifest with an absolute executable path and a literal argument list. See [the sample plugin](examples/plugin.py).
 
-## Lifter, tham chiếu và debug offline
+## Project resources
 
-- **Decompile with RAVEN** mở pseudocode C trực tiếp cho các hàm số nguyên x86-64 tuyến tính thuộc tập lệnh được hỗ trợ. `raven decompile file.bin 0x401000 --native` dùng lõi này. Tool `lift_function` trả prototype và độ rộng suy ra. `emulate_function` dùng cùng mô hình với đầu vào chỉ định. Chưa hỗ trợ nhánh, bộ nhớ, thanh ghi SIMD và các lời gọi khác trong mô hình này.
-- `xrefs` nhận `direction: "incoming"` hoặc `"outgoing"`. RAVEN đọc toán hạng bộ nhớ tĩnh trên x86/x64. Đích đọc từ ô con trỏ trong raw image được đánh dấu ứng viên. GOT/IAT đã relocate, jump table và đích dựa vào register hiện vẫn cần phân tích bổ sung.
-- `debug_types` đọc khai báo struct, enum, array và kiểu dữ liệu từ DWARF nhúng trong file. Chọn tool này trong GUI hoặc MCP, hoặc chạy `raven call --file program debug_types '{"query":"MyStruct"}'`.
-- `open_gzip` giải nén lớp gzip chuẩn bao quanh một binary, tối đa 128 MiB sau giải nén. Đây là hỗ trợ container, chưa có trình tháo packer executable.
-- `inspect_core` đọc PC, SP, thread ID và signal đã ghi trong Linux ELF64 core x86-64/ARM64. Ví dụ `raven call inspect_core '{"path":"/absolute/path/core"}'`. Đây là chẩn đoán sau khi tiến trình dừng. Live debugging, stepping và stack unwinding vẫn đang thiếu.
-
-## Metadata, chữ ký hàm và trao đổi
-
-```sh
-raven --database workspace.sqlite annotate file.bin 0x401000 --name parse_header --comment 'checked header' --author analyst --expected-revision 0
-raven --database workspace.sqlite call --file file.bin annotations '{}'
-raven --database workspace.sqlite call --file file.bin signature_save '{"address":"0x401000","size":32,"name":"parse_header"}'
-```
-
-Tên tool trong `call` dùng underscore: `signature_save`, với `{"address":"0x401000","size":32,"name":"parse_header"}`. `signature_match` cần cùng kích thước byte. Chữ ký hiện khớp chính xác bytes + architecture, chưa bỏ qua relocation.
-
-Annotation có revision. `expected_revision:0` tạo mới; revision hiện tại dùng để sửa. Không khớp sẽ báo conflict và giữ dữ liệu cũ. CLI/MCP có thể bỏ expected revision để cập nhật vô điều kiện; GUI luôn dùng revision. `import_annotations` yêu cầu map revision cho tất cả địa chỉ trong document; import là một transaction. JSON export có thể đưa vào Git bằng công cụ Git của bạn; chưa có đồng bộ Git/remote tự động.
-
-## Cộng tác annotation từ xa
-
-`raven-mcp --database /srv/raven/team.sqlite --shared-project WORKSPACE_SHA256 --shared-author Alice` mở chế độ annotation cho một workspace. Đặt tiến trình này ở máy chia sẻ và kết nối MCP qua SSH stdio. Mỗi người dùng nên có SSH key với forced command do quản trị viên cấu hình, cố định database, workspace ID và tác giả cho key đó. Cấu hình client dùng `ssh` với đối số `["-T", "raven@your-host"]`. Máy chủ SSH đảm nhiệm xác thực và mã hóa.
-
-Chế độ này chỉ có `project_info`, `annotations`, `annotate`, `audit_log`, `export_annotations`. Update bắt buộc dùng revision vừa đọc, hoặc `0` để tạo mới. Không có mở file, đọc bytes, chạy plugin hay ghi báo cáo qua client chia sẻ. Workspace ID lấy từ SHA-256 binary đã phân tích, hoặc `raw_mapping.workspace_id` cho ảnh raw. Đây là chia sẻ annotation qua MCP, chưa có đồng bộ desktop hoặc merge IDB.
-
-## Assist
-
-Cấu hình endpoint chat-completions tương thích (có thể là model local):
-
-```sh
-export RAVEN_ASSIST_URL=http://127.0.0.1:1234/v1/chat/completions
-export RAVEN_ASSIST_MODEL=my-local-model
-# Nếu endpoint cần token, đặt RAVEN_ASSIST_KEY trong môi trường.
-raven assist file.bin 'Explain this function' --address 0x401000
-```
-
-Chỉ lệnh Assist gửi tối đa khoảng 48KB ngữ cảnh phân tích đến endpoint đã chọn. Không tự sửa annotation, không chạy tool do model đề xuất. Phần kết nối được kiểm thử bằng mock local; chưa kiểm thử model thật. Không có endpoint/model thì báo cấu hình thiếu, không tạo câu trả lời giả.
-
-## Plugin SDK
-
-Tạo manifest có đường dẫn tuyệt đối:
-
-```json
-{"name":"section-stats","version":"1.0.0","executable":"/usr/bin/python3","args":["/absolute/path/to/raven-disassembler/examples/plugin.py"],"description":"Summarize executable sections"}
-```
-
-```sh
-raven call --file file.bin run_plugin '{"manifest":"/absolute/path/to/plugin.json"}'
-```
-
-Plugin nhận một JSON analysis qua stdin và trả một JSON qua stdout; stderr dành cho log. Thời hạn direct process 30 giây, output tối đa 4MiB mỗi stream. Plugin là chương trình thật chạy với quyền user, không có sandbox và không tương thích ABI plugin IDA. Thư viện Rust public nằm trong `crates/core` và `crates/addons`.
-
-## Kiểm chứng và tài liệu
-
-- [Phạm vi so với tất cả mục trong ảnh](docs/FEATURE-MATRIX.md)
-- [Kết quả kiểm chứng](docs/VALIDATION.md)
-- [Thiết kế và roadmap](docs/ARCHITECTURE.md)
-- [Kho SQLite](crates/addons/README.md)
-
-Tên sản phẩm Hex-Rays dùng để đối chiếu phạm vi. RAVEN không chứa logo, license hay mã proprietary của Hex-Rays.
+- [Platform guide](docs/PLATFORMS.md)
+- [Feature matrix](docs/FEATURE-MATRIX.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Validation history](docs/VALIDATION.md)
+- [License](LICENSE) and [third-party notices](docs/THIRD-PARTY-NOTICES.md)

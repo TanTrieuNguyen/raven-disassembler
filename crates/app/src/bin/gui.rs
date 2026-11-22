@@ -522,7 +522,11 @@ impl eframe::App for App {
             ui.horizontal_wrapped(|ui| {
                 ui.label(&self.status);
                 ui.separator();
-                ui.small("RAVEN 0.1 · independent engine · function extents may be inferred");
+                ui.small(concat!(
+                    "RAVEN ",
+                    env!("CARGO_PKG_VERSION"),
+                    " · Function extents may be inferred"
+                ));
             });
         });
         egui::SidePanel::left("functions")
